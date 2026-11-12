@@ -43,6 +43,8 @@ import {
   AttendanceCorrection, 
   LeaveRequest, 
   Shift,
+  Branch,
+  AttendanceDevice,
   AppNotification 
 } from './types/database.types';
 import { 
@@ -63,7 +65,14 @@ export default function App() {
   const isLive = dataService.isLiveMode();
 
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
-  const [selectedBranchId, setSelectedBranchId] = useState<string>(DEMO_BRANCHES[0].id);
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(isLive ? '' : DEMO_BRANCHES[0].id);
+  const [branches, setBranches] = useState<Branch[]>(isLive ? [] : DEMO_BRANCHES);
+  const [devices, setDevices] = useState<AttendanceDevice[]>(isLive ? [] : DEMO_DEVICES);
+  const [authReady, setAuthReady] = useState<boolean>(!isLive);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [attendanceFilter, setAttendanceFilter] = useState<string>('all');
   const [isSeniorMode, setIsSeniorMode] = useState<boolean>(true); // Senior mode on by default for 70+ year old owner
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(authService.getCurrentUser());
@@ -87,8 +96,8 @@ export default function App() {
   const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
   const [correctionTargetEmpId, setCorrectionTargetEmpId] = useState<string | undefined>(undefined);
 
-  const activeBranch = DEMO_BRANCHES.find(b => b.id === selectedBranchId) || DEMO_BRANCHES[0];
-  const primaryDevice = DEMO_DEVICES[0]; // Hikvision DS-K1T320MFWX
+  const activeBranch = branches.find(b => b.id === selectedBranchId) || branches[0];
+  const primaryDevice = devices[0];
 
   // Toast feedback helper
   const showToast = (msg: string) => {
@@ -100,37 +109,86 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = authService.onAuthStateChange(user => {
       setCurrentUser(user);
+      setAuthReady(true);
     });
     return unsubscribe;
   }, []);
 
-  // Async data loader from dataService
+  // Load data only after the live user and their organization membership are resolved.
+  // Live mode never falls back to synthetic demo records after a failed request.
   useEffect(() => {
     let isMounted = true;
+
+    if (isLive && !currentUser) {
+      setBranches([]);
+      setDevices([]);
+      setEmployees([]);
+      setSummaries([]);
+      setCorrections([]);
+      setLeaveRequests([]);
+      setShifts([]);
+      setNotifications([]);
+      setSelectedBranchId('');
+      return () => { isMounted = false; };
+    }
+
+    const organizationId = isLive
+      ? currentUser?.organizationId
+      : DEMO_ORGANIZATION.id;
+
+    if (!organizationId) return () => { isMounted = false; };
+
     async function loadData() {
       try {
-        const [emps, sums, corrs, leaves, shs] = await Promise.all([
-          dataService.getEmployees('org-jinson-chit-fund'),
-          dataService.getAttendanceSummaries('org-jinson-chit-fund'),
-          dataService.getAttendanceCorrections('org-jinson-chit-fund'),
-          dataService.getLeaveRequests('org-jinson-chit-fund'),
-          dataService.getShifts('org-jinson-chit-fund'),
+        const [branchRows, employeeRows, summaryRows, correctionRows, leaveRows, shiftRows, deviceRows] = await Promise.all([
+          dataService.getBranches(organizationId),
+          dataService.getEmployees(organizationId, currentUser?.assignedBranchId),
+          dataService.getAttendanceSummaries(organizationId),
+          dataService.getAttendanceCorrections(organizationId),
+          dataService.getLeaveRequests(organizationId),
+          dataService.getShifts(organizationId),
+          dataService.getDevices(organizationId),
         ]);
-        if (isMounted) {
-          if (emps.length > 0) setEmployees(emps);
-          if (sums.length > 0) setSummaries(sums);
-          if (corrs.length > 0) setCorrections(corrs);
-          if (leaves.length > 0) setLeaveRequests(leaves);
-          if (shs.length > 0) setShifts(shs);
+
+        if (!isMounted) return;
+        setBranches(branchRows);
+        setEmployees(employeeRows);
+        setSummaries(summaryRows);
+        setCorrections(correctionRows);
+        setLeaveRequests(leaveRows);
+        setShifts(shiftRows);
+        setDevices(deviceRows);
+        if (isLive) setNotifications([]);
+        if (branchRows.length > 0) {
+          const preferredBranch = currentUser?.assignedBranchId;
+          setSelectedBranchId(
+            preferredBranch && branchRows.some(branch => branch.id === preferredBranch)
+              ? preferredBranch
+              : branchRows[0].id,
+          );
+        } else {
+          setSelectedBranchId('');
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn('[DataService] Error loading data:', msg);
+        console.error('[DataService] Failed to load organization data:', msg);
+        if (isMounted && isLive) {
+          setBranches([]);
+          setDevices([]);
+          setEmployees([]);
+          setSummaries([]);
+          setCorrections([]);
+          setLeaveRequests([]);
+          setShifts([]);
+          setNotifications([]);
+        }
+        showToast(`Unable to load organization data: ${msg}`);
       }
     }
-    loadData();
+
+    void loadData();
     return () => { isMounted = false; };
-  }, [dataService]);
+  }, [dataService, isLive, currentUser?.id, currentUser?.organizationId, currentUser?.assignedBranchId]);
 
   // Real-time IST Clock
   useEffect(() => {
@@ -165,27 +223,30 @@ export default function App() {
       const created = await dataService.createEmployee(newEmpData);
       setEmployees(prev => [...prev, created]);
 
-      // Create an initial summary record for today
-      const newSummary: AttendanceDailySummary = {
-        id: `sum-${created.id}-2026-10-15`,
-        organization_id: 'org-jinson-chit-fund',
-        employee_id: created.id,
-        work_date: '2026-10-15',
-        total_work_minutes: 0,
-        total_break_minutes: 0,
-        overtime_minutes: 0,
-        status: 'present',
-        is_late: false,
-        late_minutes: 0,
-        is_early_departure: false,
-        early_departure_minutes: 0,
-        is_missing_checkout: false,
-        first_check_in: '2026-10-15T09:30:00+05:30',
-        is_approved: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      setSummaries(prev => [...prev, newSummary]);
+      // Synthetic attendance is created only in demo mode. A live employee must
+      // receive attendance from a real device event or an authorized correction.
+      if (!isLive) {
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        const newSummary: AttendanceDailySummary = {
+          id: `sum-${created.id}-${today}`,
+          organization_id: created.organization_id,
+          employee_id: created.id,
+          work_date: today,
+          total_work_minutes: 0,
+          total_break_minutes: 0,
+          overtime_minutes: 0,
+          status: 'absent',
+          is_late: false,
+          late_minutes: 0,
+          is_early_departure: false,
+          early_departure_minutes: 0,
+          is_missing_checkout: false,
+          is_approved: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        setSummaries(prev => [...prev, newSummary]);
+      }
 
       showToast(`Staff member "${created.display_name}" registered successfully!`);
     } catch (err: unknown) {
@@ -353,6 +414,44 @@ export default function App() {
     setCurrentTab('attendance');
   };
 
+  const handleLiveSignIn = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginBusy(true);
+    setLoginError(null);
+    const result = await authService.signInWithPassword(loginEmail, loginPassword);
+    setLoginBusy(false);
+    if (!result.success) setLoginError(result.error || 'Unable to sign in.');
+    else setLoginPassword('');
+  };
+
+  if (isLive && (!authReady || !currentUser)) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <form onSubmit={handleLiveSignIn} className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-widest text-slate-500">AttendEase secure access</div>
+            <h1 className="mt-2 text-2xl font-bold text-slate-900">Sign in</h1>
+            <p className="mt-1 text-sm text-slate-600">Use the account created for your organization in Supabase Authentication.</p>
+          </div>
+          {!authReady && <p className="text-sm text-slate-600">Restoring your session…</p>}
+          <label className="block text-sm font-semibold text-slate-700">
+            Email
+            <input type="email" autoComplete="username" required value={loginEmail} onChange={event => setLoginEmail(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+          </label>
+          <label className="block text-sm font-semibold text-slate-700">
+            Password
+            <input type="password" autoComplete="current-password" required value={loginPassword} onChange={event => setLoginPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" />
+          </label>
+          {loginError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{loginError}</p>}
+          <button disabled={!authReady || loginBusy} type="submit" className="w-full rounded-lg bg-slate-900 px-4 py-3 font-bold text-white disabled:opacity-50">
+            {loginBusy ? 'Signing in…' : 'Sign in'}
+          </button>
+          <p className="text-xs text-slate-500">If your account has no organization membership, ask the organization owner to provision it. Demo identities are not accepted in live mode.</p>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className={`min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 antialiased ${
       isSeniorMode ? 'text-base' : 'text-sm'
@@ -361,8 +460,8 @@ export default function App() {
       <Header
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
-        organizationName={DEMO_ORGANIZATION.name}
-        branchName={activeBranch.name}
+        organizationName={isLive ? currentUser?.fullName || 'AttendEase' : DEMO_ORGANIZATION.name}
+        branchName={activeBranch?.name || 'No branch assigned'}
         isSeniorMode={isSeniorMode}
         onToggleSeniorMode={() => setIsSeniorMode(!isSeniorMode)}
       />
@@ -412,14 +511,14 @@ export default function App() {
               onChange={(e) => setSelectedBranchId(e.target.value)}
               className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
             >
-              {DEMO_BRANCHES.map(b => (
+              {branches.map(b => (
                 <option key={b.id} value={b.id}>
                   {b.name} ({b.code})
                 </option>
               ))}
             </select>
             <span className="text-xs text-slate-500 hidden md:inline">
-              · {activeBranch.address}, {activeBranch.city}
+              · {activeBranch?.address || ''}{activeBranch?.city ? `, ${activeBranch.city}` : ''}
             </span>
           </div>
 
@@ -534,10 +633,18 @@ export default function App() {
 
             {/* Middle Section: Device Health & Payroll Status */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <DeviceHealthCard
-                device={primaryDevice}
-                onOpenManagement={() => setCurrentTab('devices')}
-              />
+              {primaryDevice ? (
+                <DeviceHealthCard
+                  device={primaryDevice}
+                  onOpenManagement={() => setCurrentTab('devices')}
+                />
+              ) : (
+                <div className="bg-white rounded-xl border border-slate-200 p-5">
+                  <h3 className="font-bold text-slate-900">No attendance device configured</h3>
+                  <p className="text-sm text-slate-600 mt-1">Register a device before expecting biometric attendance to appear.</p>
+                  <button type="button" onClick={() => setCurrentTab('devices')} className="mt-3 text-sm font-semibold underline">Open device management</button>
+                </div>
+              )}
 
               <PayrollStatusCard
                 currentPeriod="October 2026"
@@ -605,7 +712,7 @@ export default function App() {
           <EmployeesView
             employees={employees}
             shifts={shifts}
-            branches={DEMO_BRANCHES}
+            branches={branches}
             onAddEmployee={handleAddEmployee}
             onToggleStatus={handleToggleEmployeeStatus}
           />
@@ -620,13 +727,18 @@ export default function App() {
 
         {currentTab === 'devices' && (
           <DeviceManagementView
-            devices={DEMO_DEVICES}
+            devices={devices}
             onOpenPocModal={() => setIsPocModalOpen(true)}
           />
         )}
 
         {currentTab === 'payroll' && (
-          <PayrollView employees={employees} />
+          isLive ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+              <h2 className="font-bold">Live payroll workflow is not enabled</h2>
+              <p className="mt-1 text-sm">The current repository contains a payroll preview, but payroll calculation, approval and immutable database persistence have not yet been connected end to end. Do not use this screen to calculate or pay real salaries.</p>
+            </div>
+          ) : <PayrollView employees={employees} />
         )}
 
         {currentTab === 'reports' && (
