@@ -176,7 +176,16 @@ export async function runStagingVerification(): Promise<void> {
     if (secondaryTenant.rowCount && secondaryTenant.rows[0].code !== 'ATTENDEASE_STAGING_TEST_B') {
       throw new Error('Refusing to clean secondary test UUID: organization marker does not match.');
     }
-    if (!primaryTenant.rowCount && !secondaryTenant.rowCount) return;
+    if (!primaryTenant.rowCount && !secondaryTenant.rowCount) {
+      await client.query(
+        'DELETE FROM user_profiles WHERE id = ANY($1::uuid[]) AND email = ANY($2::text[])',
+        [
+          [TEST_RLS_USER_ID, TEST_OTHER_USER_ID],
+          ['staging-rls-manager@attendease.invalid', 'staging-rls-coworker@attendease.invalid'],
+        ],
+      );
+      return;
+    }
 
     await client.query('BEGIN');
     try {
@@ -585,6 +594,26 @@ export async function runStagingVerification(): Promise<void> {
         message: profilePrivate ? 'User can read their own profile but not a co-member profile.' : `Unexpected visible profile count: ${profileRows.rowCount}`,
       });
 
+      await rlsClient.query('SAVEPOINT cross_tenant_write');
+      let crossTenantEmployeeWriteDenied = false;
+      try {
+        await rlsClient.query(
+          `INSERT INTO employees (organization_id, branch_id, employee_code, first_name, last_name, display_name, designation, joining_date)
+           VALUES ($1, $2, 'STG-BLOCKED', 'Blocked', 'Write', 'Blocked Write', 'Test', '2026-01-01')`,
+          [TEST_ORG_B_ID, TEST_BRANCH_B_ID],
+        );
+      } catch (error: any) {
+        crossTenantEmployeeWriteDenied = error.code === '42501';
+        await rlsClient.query('ROLLBACK TO SAVEPOINT cross_tenant_write');
+      }
+      await rlsClient.query('RELEASE SAVEPOINT cross_tenant_write');
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Cross-tenant employee write denied',
+        passed: crossTenantEmployeeWriteDenied,
+        message: crossTenantEmployeeWriteDenied ? 'Branch manager cannot create an employee in another tenant.' : 'Cross-tenant employee insert was not denied as expected.',
+      });
+
       await rlsClient.query('SAVEPOINT raw_event_write');
       let rawEventWriteDenied = false;
       try {
@@ -636,6 +665,21 @@ export async function runStagingVerification(): Promise<void> {
     } finally {
       poolClient.release();
     }
+
+    // Clean test tenants before declaring the suite successful. The finally
+    // block repeats this idempotently as a failure-path safeguard.
+    const finalCleanupClient = await pool.connect();
+    try {
+      await cleanupTestData(finalCleanupClient);
+    } finally {
+      finalCleanupClient.release();
+    }
+    results.push({
+      suite: '8. Test Data Cleanup',
+      test: 'Marked staging test rows and profiles removed',
+      passed: true,
+      message: 'Reserved synthetic tenant IDs, dependent rows and synthetic profile records were removed.',
+    });
 
     // Summary Display
     console.log('\n' + '='.repeat(78));
