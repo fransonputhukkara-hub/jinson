@@ -1,12 +1,17 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+// Supabase publishable keys are intended for browser use with RLS enabled.
+ // Keep the legacy anon-key variable as a backwards-compatible fallback.
+ const supabaseAnonKey =
+   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+   import.meta.env.VITE_SUPABASE_ANON_KEY ||
+   '';
 
-const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true' || import.meta.env.VITE_DEMO_MODE === true;
+// Fail closed to demo mode. Live connectivity requires an explicit VITE_DEMO_MODE=false.
 
 export const isSupabaseConfigured = Boolean(
-  !isDemoMode &&
+  import.meta.env.VITE_DEMO_MODE === 'false' &&
   supabaseUrl && 
   supabaseAnonKey && 
   supabaseUrl !== 'https://your-supabase-project.supabase.co' &&
@@ -24,7 +29,7 @@ if (isSupabaseConfigured) {
       },
     });
   } catch (err) {
-    console.warn('[Supabase] Initialization failed, falling back to offline demo mode:', err);
+    console.error('[Supabase] Initialization failed. Live services are unavailable; no demo fallback will be selected:', err);
     client = null;
   }
 }
