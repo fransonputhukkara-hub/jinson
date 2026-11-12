@@ -303,6 +303,10 @@ export default function App() {
 
   // Workflow 4: Approve attendance correction (Updates summary & resolves missing checkout!)
   const handleApproveCorrection = async (correctionId: string) => {
+    if (isLive) {
+      showToast('Live correction approval is disabled until the adjustment and daily-summary recalculation are handled in one database transaction.');
+      return;
+    }
     const targetCorrection = corrections.find(c => c.id === correctionId);
     if (!targetCorrection) return;
 
@@ -369,9 +373,10 @@ export default function App() {
       setLeaveRequests(prev => prev.map(l => l.id === leaveId ? updated : l));
 
       // If leave covers today, update employee summary to on_leave
-      if (req.start_date <= '2026-10-15' && req.end_date >= '2026-10-15') {
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      if (!isLive && req.start_date <= today && req.end_date >= today) {
         setSummaries(prev => prev.map(s => {
-          if (s.employee_id === req.employee_id && s.work_date === '2026-10-15') {
+          if (s.employee_id === req.employee_id && s.work_date === today) {
             return {
               ...s,
               status: 'on_leave',
@@ -383,7 +388,9 @@ export default function App() {
       }
 
       const emp = employees.find(e => e.id === req.employee_id);
-      showToast(`✓ Leave approved for ${emp?.display_name || 'Staff'}.`);
+      showToast(isLive
+        ? `Leave approved for ${emp?.display_name || 'staff'}. Daily attendance recalculation remains a separate pending workflow.`
+        : `✓ Leave approved for ${emp?.display_name || 'Staff'}.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(`Failed to approve leave: ${msg}`);
@@ -403,6 +410,10 @@ export default function App() {
 
   // Workflow 7: Shift parameters update
   const handleUpdateShiftRule = (updatedShift: Shift) => {
+    if (isLive) {
+      showToast('Live shift-rule editing is not enabled until persistent shift update and audit services are implemented.');
+      return;
+    }
     setShifts(prev => prev.map(s => s.id === updatedShift.id ? updatedShift : s));
     showToast('Shift working rules updated for branch.');
   };
@@ -743,10 +754,12 @@ export default function App() {
         )}
 
         {currentTab === 'shifts' && (
-          <ShiftsAndRulesView
-            shifts={shifts}
-            onUpdateShiftRule={handleUpdateShiftRule}
-          />
+          isLive ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+              <h2 className="font-bold">Live shift-rule editing is not enabled</h2>
+              <p className="mt-1 text-sm">The demo screen edits local state only. Persistent shift configuration and audit logging must be completed before editing live shift rules.</p>
+            </div>
+          ) : <ShiftsAndRulesView shifts={shifts} onUpdateShiftRule={handleUpdateShiftRule} />
         )}
 
         {currentTab === 'devices' && (
