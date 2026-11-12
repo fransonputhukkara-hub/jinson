@@ -67,7 +67,7 @@ Do not add `STAGING_DATABASE_URL` or `EXPECTED_STAGING_PROJECT_REF` to Vercel. N
 
 ## 5. Migrations applied by the verification runner
 
-The runner applies these nine forward-only migration files in order:
+The runner applies these ten forward-only migration files in order:
 
 1. `20250101000000_initial_schema.sql` — organizations, branches, memberships, employees, shifts, devices, attendance events, daily summaries and audit-log foundation.
 2. `20250101000001_tenant_isolation_rls.sql` — initial RLS enablement, tenant policies and helper functions.
@@ -85,7 +85,7 @@ The runner refuses to adopt an existing schema if it finds application tables bu
 - PostgreSQL 15 or later server version.
 - Exact project-reference match for the recognized Supabase connection format.
 - TLS certificate verification.
-- Sequential, transactional application of migrations 000000 through 000008.
+- Sequential, transactional application of migrations 000000 through 000009.
 - Two independent PostgreSQL connections and both payroll-lock transaction orderings. It observes a real PostgreSQL lock wait using `pg_stat_activity`; it does not treat a fixed delay as proof.
 - SQLSTATE and lock outcome for the locked-payroll child insertion.
 - `locked_at` timestamp behavior under an Asia/Kolkata session timezone.
