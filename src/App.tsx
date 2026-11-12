@@ -151,14 +151,20 @@ export default function App() {
         ]);
 
         if (!isMounted) return;
-        const visibleBranches = currentUser?.assignedBranchId
-          ? branchRows.filter(branch => branch.id === currentUser.assignedBranchId)
+        const visibleEmployeeRows = currentUser?.role === 'employee' && currentUser.employeeId
+          ? employeeRows.filter(employee => employee.id === currentUser.employeeId)
+          : employeeRows;
+        const employeeBranchId = currentUser?.role === 'employee'
+          ? visibleEmployeeRows[0]?.branch_id
+          : currentUser?.assignedBranchId;
+        const visibleBranches = employeeBranchId
+          ? branchRows.filter(branch => branch.id === employeeBranchId)
           : branchRows;
         const selectedOrganization = organizationRows.find(org => org.id === organizationId);
         setOrganizationName(selectedOrganization?.name || (isLive ? 'Organization' : DEMO_ORGANIZATION.name));
         setBranches(visibleBranches);
-        setEmployees(employeeRows);
-        const visibleEmployeeIds = new Set(employeeRows.map(employee => employee.id));
+        setEmployees(visibleEmployeeRows);
+        const visibleEmployeeIds = new Set(visibleEmployeeRows.map(employee => employee.id));
         setSummaries(summaryRows.filter(summary => visibleEmployeeIds.has(summary.employee_id)));
         setCorrections(correctionRows.filter(correction => visibleEmployeeIds.has(correction.employee_id)));
         setLeaveRequests(leaveRows.filter(request => visibleEmployeeIds.has(request.employee_id)));
@@ -743,14 +749,21 @@ export default function App() {
         )}
 
         {currentTab === 'employees' && (
-          <EmployeesView
-            organizationId={activeOrganizationId}
-            employees={employees}
-            shifts={shifts}
-            branches={branches}
-            onAddEmployee={handleAddEmployee}
-            onToggleStatus={handleToggleEmployeeStatus}
-          />
+          isLive && currentUser?.role !== 'company_owner' && currentUser?.role !== 'company_admin' ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+              <h2 className="font-bold">Employee administration is restricted</h2>
+              <p className="mt-1 text-sm">Only organization owners and administrators can add or change employee records. Your account can view only the employee records permitted by its branch and role.</p>
+            </div>
+          ) : (
+            <EmployeesView
+              organizationId={activeOrganizationId}
+              employees={employees}
+              shifts={shifts}
+              branches={branches}
+              onAddEmployee={handleAddEmployee}
+              onToggleStatus={handleToggleEmployeeStatus}
+            />
+          )
         )}
 
         {currentTab === 'shifts' && (
@@ -763,10 +776,14 @@ export default function App() {
         )}
 
         {currentTab === 'devices' && (
-          <DeviceManagementView
-            devices={devices}
-            onOpenPocModal={() => setIsPocModalOpen(true)}
-          />
+          isLive && currentUser?.role !== 'company_owner' && currentUser?.role !== 'company_admin' && currentUser?.role !== 'installer_partner' ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+              <h2 className="font-bold">Device administration is restricted</h2>
+              <p className="mt-1 text-sm">Your organization role does not permit device configuration.</p>
+            </div>
+          ) : (
+            <DeviceManagementView devices={devices} onOpenPocModal={() => setIsPocModalOpen(true)} />
+          )
         )}
 
         {currentTab === 'payroll' && (
