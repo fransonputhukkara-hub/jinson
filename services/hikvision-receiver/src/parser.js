@@ -13,15 +13,25 @@ function decodeXml(value) {
 }
 
 function xmlTag(source, name) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = source.match(new RegExp(`<(?:(?:[A-Za-z_][\\w.-]*):)?${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:(?:[A-Za-z_][\\w.-]*):)?${escaped}\\s*>`, 'i'));
-  return match ? decodeXml(match[1].replace(/<[^>]+>/g, '')) : undefined;
+  const open = `<${name}>`;
+  const close = `</${name}>`;
+  const start = source.indexOf(open);
+  if (start < 0) return undefined;
+  const valueStart = start + open.length;
+  const end = source.indexOf(close, valueStart);
+  if (end < 0) return undefined;
+  return decodeXml(source.slice(valueStart, end).replace(/<[^>]*>/g, ''));
 }
 
 function parseXmlEvent(xml) {
-  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('XML declarations with DTD/entities are not accepted');
-  const detailMatch = xml.match(/<(?:[A-Za-z_][\\w.-]*:)?AccessControllerEvent(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[A-Za-z_][\\w.-]*:)?AccessControllerEvent\\s*>/i);
-  const detail = detailMatch ? detailMatch[1] : xml;
+  if (xml.includes('<!DOCTYPE') || xml.includes('<!ENTITY')) {
+    throw new Error('XML declarations with DTD/entities are not accepted');
+  }
+  const open = '<AccessControllerEvent>';
+  const close = '</AccessControllerEvent>';
+  const start = xml.indexOf(open);
+  const end = start < 0 ? -1 : xml.indexOf(close, start + open.length);
+  const detail = start >= 0 && end >= 0 ? xml.slice(start + open.length, end) : xml;
   const field = (name) => xmlTag(detail, name) ?? xmlTag(xml, name);
   return [{
     eventType: xmlTag(xml, 'eventType'),
@@ -62,38 +72,44 @@ function getJsonCandidates(value) {
   }];
 }
 
-function parseMultipart(buffer, contentType) {
-  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i);
-  if (!boundaryMatch) throw new Error('Multipart request is missing its boundary');
-  const boundary = `--${boundaryMatch[1] ?? boundaryMatch[2]}`;
-  const parts = buffer.toString('latin1').split(boundary).slice(1);
-  const candidates = [];
-  for (let part of parts) {
-    if (part.startsWith('--')) continue;
-    part = part.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
-    const separator = part.indexOf('\r\n\r\n');
-    if (separator < 0) continue;
-    const headers = part.slice(0, separator);
-    const content = part.slice(separator + 4).replace(/\r\n$/, '');
-    // Do not store biometric photos or attachment bytes.
-    if (/filename\s*=/i.test(headers) || !content.trim()) continue;
-    try {
-      candidates.push(...parseTextPayload(content, headers.match(/content-type:\s*([^\r\n]+)/i)?.[1] ?? 'text/plain'));
-    } catch {
-      // Ignore unrelated multipart parts.
-    }
-  }
-  if (!candidates.length) throw new Error('No supported Hikvision event part found in multipart request');
-  return candidates;
-}
-
 function parseTextPayload(text, contentType = '') {
   const trimmed = text.trim();
   if (!trimmed) return [];
-  if (/<!DOCTYPE|<!ENTITY/i.test(trimmed)) throw new Error('XML declarations with DTD/entities are not accepted');
-  if (/json/i.test(contentType) || trimmed.startsWith('{') || trimmed.startsWith('[')) return getJsonCandidates(JSON.parse(trimmed));
-  if (/xml/i.test(contentType) || trimmed.startsWith('<')) return parseXmlEvent(trimmed);
+  if (trimmed.includes('<!DOCTYPE') || trimmed.includes('<!ENTITY')) {
+    throw new Error('XML declarations with DTD/entities are not accepted');
+  }
+  if (contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return getJsonCandidates(JSON.parse(trimmed));
+  }
+  if (contentType.includes('xml') || trimmed.startsWith('<')) return parseXmlEvent(trimmed);
   throw new Error('Unsupported Hikvision event content type');
+}
+
+function parseMultipart(buffer, contentType) {
+  const boundaryPart = contentType.split(';').map((part) => part.trim()).find((part) => part.toLowerCase().startsWith('boundary='));
+  if (!boundaryPart) throw new Error('Multipart request is missing its boundary');
+  let boundary = boundaryPart.slice('boundary='.length).trim();
+  if (boundary.startsWith('"') && boundary.endsWith('"')) boundary = boundary.slice(1, -1);
+  if (!boundary || boundary.length > 200) throw new Error('Multipart boundary is invalid');
+  const parts = buffer.toString('latin1').split(`--${boundary}`).slice(1);
+  const candidates = [];
+  for (let part of parts) {
+    if (part.startsWith('--')) continue;
+    while (part.startsWith('\r\n')) part = part.slice(2);
+    while (part.startsWith('\n')) part = part.slice(1);
+    const separator = part.indexOf('\r\n\r\n');
+    if (separator < 0) continue;
+    const headers = part.slice(0, separator);
+    let content = part.slice(separator + 4);
+    while (content.endsWith('\r\n')) content = content.slice(0, -2);
+    if (headers.toLowerCase().includes('filename=') || !content.trim()) continue;
+    const typeLine = headers.split('\r\n').find((line) => line.toLowerCase().startsWith('content-type:'));
+    const partType = typeLine ? typeLine.slice(typeLine.indexOf(':') + 1).trim().toLowerCase() : 'text/plain';
+    try { candidates.push(...parseTextPayload(content, partType)); }
+    catch { /* Ignore unrelated multipart parts. */ }
+  }
+  if (!candidates.length) throw new Error('No supported Hikvision event part found in multipart request');
+  return candidates;
 }
 
 export function parseHikvisionPayload(buffer, contentType = '') {
@@ -105,14 +121,15 @@ export function parseHikvisionPayload(buffer, contentType = '') {
 function parseEventTime(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   const candidate = value.trim();
-  const hasTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(candidate);
-  const isoLike = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/.test(candidate);
-  const date = new Date(hasTimezone || !isoLike ? candidate : `${candidate.replace(' ', 'T')}${IST_OFFSET}`);
+  const hasTimezone = candidate.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(candidate) || /[+-]\d{4}$/.test(candidate);
+  const isIsoDateTime = candidate.length >= 19 && candidate[4] === '-' && candidate[7] === '-' && (candidate[10] === 'T' || candidate[10] === ' ');
+  const normalized = isIsoDateTime && !hasTimezone ? `${candidate.replace(' ', 'T')}${IST_OFFSET}` : candidate;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function normalizeAttendanceStatus(value) {
-  const status = String(value ?? '').trim().toLowerCase().replace(/[\s_-]/g, '');
+  const status = String(value ?? '').trim().toLowerCase().replaceAll(' ', '').replaceAll('_', '').replaceAll('-', '');
   if (['1', 'checkin', 'onwork', 'in'].includes(status)) return 'check_in';
   if (['2', 'checkout', 'offwork', 'out'].includes(status)) return 'check_out';
   if (['3', 'breakout'].includes(status)) return 'break_start';
@@ -137,8 +154,11 @@ export function normalizeHikvisionEvents(candidates) {
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object') continue;
     const eventType = String(candidate.eventType ?? '').trim();
-    if (eventType && !/access.?controller.?event/i.test(eventType)) continue;
-    const deviceUserId = String(candidate.employeeNoString ?? candidate.employeeNo ?? candidate.cardNo ?? '').trim();
+    if (eventType && !eventType.toLowerCase().includes('accesscontrollerevent')) continue;
+    const employeeNoString = candidate.employeeNoString ?? '';
+    const employeeNo = candidate.employeeNo ?? '';
+    const cardNo = candidate.cardNo ?? '';
+    const deviceUserId = String(employeeNoString || employeeNo || cardNo).trim();
     const eventTime = parseEventTime(candidate.dateTime ?? candidate.time);
     if (!deviceUserId || deviceUserId.length > 64 || !eventTime) continue;
     const major = candidate.majorEventType ?? candidate.major;
@@ -155,16 +175,16 @@ export function normalizeHikvisionEvents(candidates) {
         eventType: eventType || 'AccessControllerEvent',
         eventDescription: String(candidate.eventDescription ?? '').slice(0, 120),
         dateTime: String(candidate.dateTime ?? candidate.time ?? ''),
-        employeeNoString: String(candidate.employeeNoString ?? ''),
-        employeeNo: String(candidate.employeeNo ?? ''),
-        cardNo: String(candidate.cardNo ?? ''),
+        employeeNoString: String(employeeNoString),
+        employeeNo: String(employeeNo),
+        cardNo: String(cardNo),
         attendanceStatus: String(candidate.attendanceStatus ?? candidate.attendanceState ?? ''),
         majorEventType: String(major ?? ''),
         subEventType: String(minorType ?? ''),
         currentVerifyMode: String(candidate.currentVerifyMode ?? candidate.verifyMode ?? ''),
         serialNo: serialNo ?? '',
       },
-      mappingKeyType: candidate.employeeNoString || candidate.employeeNo ? 'device_user_id' : 'card_no',
+      mappingKeyType: employeeNoString || employeeNo ? 'device_user_id' : 'card_no',
     });
   }
   return events;
