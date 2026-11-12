@@ -9,7 +9,6 @@ import {
   Building2 
 } from 'lucide-react';
 import { Shift } from '../types/database.types';
-import { DEMO_HOLIDAYS } from '../data/demoData';
 
 interface ShiftsAndRulesViewProps {
   shifts: Shift[];
@@ -20,19 +19,16 @@ export const ShiftsAndRulesView: React.FC<ShiftsAndRulesViewProps> = ({
   shifts,
   onUpdateShiftRule,
 }) => {
-  const currentShift = shifts[0] || {
-    id: 'shift-general',
-    organization_id: 'org-jinson-chit-fund',
-    name: 'Chit Office Shift',
-    start_time: '09:30',
-    end_time: '18:00',
-    late_grace_minutes: 15,
-    early_departure_grace_minutes: 15,
-    half_day_threshold_minutes: 240,
-    is_night_shift: false,
-    is_active: true,
-    created_at: new Date().toISOString(),
-  };
+  const currentShift = shifts[0];
+
+  if (!currentShift) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="text-lg font-bold text-slate-900">No shift configured</h2>
+        <p className="mt-2 text-sm text-slate-600">Create a shift after the organization has been configured. No default working hours or payroll rules are assumed.</p>
+      </div>
+    );
+  }
 
   const [graceMinutes, setGraceMinutes] = useState(currentShift.late_grace_minutes);
   const [earlyGraceMinutes, setEarlyGraceMinutes] = useState(currentShift.early_departure_grace_minutes);
@@ -212,18 +208,7 @@ export const ShiftsAndRulesView: React.FC<ShiftsAndRulesViewProps> = ({
                 Upcoming Public &amp; Regional Holidays (Kerala)
               </h4>
               <div className="space-y-2 text-xs">
-                {DEMO_HOLIDAYS.map(hol => (
-                  <div key={hol.id} className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-slate-900">{hol.name}</span>
-                      <span className="text-slate-400 font-mono text-[11px] block">{hol.date}</span>
-                    </div>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
-                      {hol.type}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                {shifts.length === 0 ? null : []}            </div>
             </div>
           </div>
         </div>
