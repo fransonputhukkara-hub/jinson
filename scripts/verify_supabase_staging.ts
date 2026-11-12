@@ -273,7 +273,7 @@ export async function runStagingVerification(): Promise<void> {
     const existingState = await pool.query(`
       SELECT
         to_regclass('public.organizations') IS NOT NULL AS has_organizations,
-        to_regclass('public.attendease_schema_migrations') IS NOT NULL AS has_history
+        to_regclass('attendease_private.attendease_schema_migrations') IS NOT NULL AS has_history
     `);
     if (existingState.rows[0].has_organizations && !existingState.rows[0].has_history) {
       throw new Error('Staging database already contains an organizations table but has no AttendEase migration history. Refusing to guess its schema state.');
@@ -290,11 +290,16 @@ export async function runStagingVerification(): Promise<void> {
       }
     }
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS public.attendease_schema_migrations (
+      CREATE SCHEMA IF NOT EXISTS attendease_private AUTHORIZATION postgres;
+      REVOKE ALL ON SCHEMA attendease_private FROM PUBLIC, anon, authenticated;
+      GRANT USAGE, CREATE ON SCHEMA attendease_private TO postgres;
+      CREATE TABLE IF NOT EXISTS attendease_private.attendease_schema_migrations (
         migration_name text PRIMARY KEY,
         checksum_sha256 text NOT NULL,
         applied_at timestamptz NOT NULL DEFAULT now()
-      )
+      );
+      REVOKE ALL ON TABLE attendease_private.attendease_schema_migrations FROM PUBLIC, anon, authenticated, service_role;
+      GRANT ALL ON TABLE attendease_private.attendease_schema_migrations TO postgres;
     `);
 
     for (const file of migrationFiles) {
@@ -302,7 +307,7 @@ export async function runStagingVerification(): Promise<void> {
       const sql = fs.readFileSync(sqlPath, 'utf8');
       const checksum = createHash('sha256').update(sql).digest('hex');
       const prior = await pool.query(
-        'SELECT checksum_sha256 FROM public.attendease_schema_migrations WHERE migration_name = $1',
+        'SELECT checksum_sha256 FROM attendease_private.attendease_schema_migrations WHERE migration_name = $1',
         [file],
       );
       if (prior.rowCount) {
@@ -520,6 +525,10 @@ export async function runStagingVerification(): Promise<void> {
         'SELECT id FROM organizations WHERE id = ANY($1::uuid[])',
         [[TEST_ORG_ID, TEST_ORG_B_ID]],
       );
+      const branchRows = await rlsClient.query(
+        'SELECT id FROM branches WHERE id = ANY($1::uuid[])',
+        [[TEST_BRANCH_ID, TEST_BRANCH_2_ID, TEST_BRANCH_B_ID]],
+      );
       const employeeRows = await rlsClient.query(
         'SELECT id FROM employees WHERE organization_id = ANY($1::uuid[])',
         [[TEST_ORG_ID, TEST_ORG_B_ID]],
@@ -535,6 +544,7 @@ export async function runStagingVerification(): Promise<void> {
 
       const tenantIsolated = tenantRows.rowCount === 1 && tenantRows.rows[0].id === TEST_ORG_ID;
       const branchScoped = employeeRows.rowCount === 1 && employeeRows.rows[0].id === TEST_EMP_ID;
+      const branchDirectoryScoped = branchRows.rowCount === 1 && branchRows.rows[0].id === TEST_BRANCH_ID;
       const summaryScoped = summaryRows.rowCount === 1 && summaryRows.rows[0].employee_id === TEST_EMP_ID;
       const profilePrivate = profileRows.rowCount === 1 && profileRows.rows[0].id === TEST_RLS_USER_ID;
 
@@ -543,6 +553,12 @@ export async function runStagingVerification(): Promise<void> {
         test: 'Cross-tenant organization isolation',
         passed: tenantIsolated,
         message: tenantIsolated ? 'Authenticated branch manager sees only the assigned organization.' : `Unexpected visible organization count: ${tenantRows.rowCount}`,
+      });
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Branch-manager branch directory isolation',
+        passed: branchDirectoryScoped,
+        message: branchDirectoryScoped ? 'Branch manager sees only the assigned branch.' : `Unexpected visible branch count: ${branchRows.rowCount}`,
       });
       results.push({
         suite: '6. Hosted RLS Isolation',
