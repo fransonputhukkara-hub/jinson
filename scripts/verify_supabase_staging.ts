@@ -168,10 +168,32 @@ export async function runStagingVerification(): Promise<void> {
     if (existing.rows[0].code !== 'ATTENDEASE_STAGING_TEST') {
       throw new Error('Refusing to clean test UUID: organization marker does not match.');
     }
-    await client.query(
-      'DELETE FROM organizations WHERE id = $1 AND code = $2',
-      [TEST_ORG_ID, 'ATTENDEASE_STAGING_TEST'],
-    );
+    await client.query('BEGIN');
+    try {
+      await client.query('DELETE FROM payslips WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM payroll_items WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM payroll_runs WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM leave_requests WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM attendance_corrections WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM attendance_daily_summaries WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM attendance_events WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM device_employee_mappings WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM device_sync_logs WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM attendance_devices WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM employee_salary_assignments WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM employees WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM departments WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM shifts WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query('DELETE FROM branches WHERE organization_id = $1', [TEST_ORG_ID]);
+      await client.query(
+        'DELETE FROM organizations WHERE id = $1 AND code = $2',
+        [TEST_ORG_ID, 'ATTENDEASE_STAGING_TEST'],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    }
   };
 
   const waitForLockWait = async (observer: pg.PoolClient, blockedPid: number, timeoutMs = 7000) => {
@@ -217,6 +239,7 @@ export async function runStagingVerification(): Promise<void> {
       '20250101000004_fix_employee_rls_recursion.sql',
       '20250101000005_concurrency_and_schema_hardening.sql',
       '20250101000006_remediation_and_security_hardening.sql',
+      '20250101000007_branch_scope_rls_hardening.sql',
     ];
 
     const migrationsDir = path.resolve(process.cwd(), 'supabase/migrations');
@@ -400,7 +423,9 @@ export async function runStagingVerification(): Promise<void> {
       });
       console.log(`  ✓ Concurrency Ordering 2 passed: ${conn2WaitOrderVerified}`);
     } finally {
-      // The shared test tenant must remain until the timezone test also finishes.
+      // Roll back any open work before returning either connection to the pool.
+      await conn1.query('ROLLBACK').catch(() => undefined);
+      await conn2.query('ROLLBACK').catch(() => undefined);
       conn1.release();
       conn2.release();
     }
