@@ -281,6 +281,7 @@ export async function runStagingVerification(): Promise<void> {
       '20250101000007_branch_scope_rls_hardening.sql',
       '20250101000008_remaining_tenant_and_payroll_integrity.sql',
       '20250101000009_decision_actor_integrity.sql',
+      '20250101000009_decision_actor_integrity.sql',
     ];
 
     const migrationsDir = path.resolve(process.cwd(), 'supabase/migrations');
