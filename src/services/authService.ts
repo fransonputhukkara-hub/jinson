@@ -117,7 +117,9 @@ class AuthService {
       throw new Error('Your account has an unrecognized organization role. Contact the platform administrator.');
     }
 
-    const email = profileResult.data?.email || user.email || '';
+    // Supabase Auth is the source of truth for the login email. A profile row is
+    // editable metadata and must not be able to remap an account to another employee.
+    const email = user.email || '';
     const fullName =
       profileResult.data?.full_name ||
       (typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : '') ||
