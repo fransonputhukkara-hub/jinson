@@ -105,14 +105,14 @@ export function parseHikvisionPayload(buffer, contentType = '') {
 function parseEventTime(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
   const candidate = value.trim();
-  const hasTimezone = /(?:z|[+-]\\d{2}:?\\d{2})$/i.test(candidate);
-  const isoLike = /^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}/.test(candidate);
+  const hasTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(candidate);
+  const isoLike = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/.test(candidate);
   const date = new Date(hasTimezone || !isoLike ? candidate : `${candidate.replace(' ', 'T')}${IST_OFFSET}`);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function normalizeAttendanceStatus(value) {
-  const status = String(value ?? '').trim().toLowerCase().replace(/[\\s_-]/g, '');
+  const status = String(value ?? '').trim().toLowerCase().replace(/[\s_-]/g, '');
   if (['1', 'checkin', 'onwork', 'in'].includes(status)) return 'check_in';
   if (['2', 'checkout', 'offwork', 'out'].includes(status)) return 'check_out';
   if (['3', 'breakout'].includes(status)) return 'break_start';
