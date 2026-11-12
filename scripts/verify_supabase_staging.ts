@@ -4,9 +4,9 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import dotenv from 'dotenv';
 
-// Load environment variables from .env or .env.local if present
-dotenv.config();
+// Preserve shell variables, prefer .env.local over .env, and never commit these files.
 dotenv.config({ path: '.env.local' });
+dotenv.config({ path: '.env' });
 
 interface CheckResult {
   suite: string;
@@ -111,7 +111,6 @@ export async function runStagingVerification(): Promise<void> {
   console.log(`Target Connection: ${safeUrlDisplay}`);
 
   // Safety Check 2: Production Guard (URL substrings & project ref keywords)
-  const urlLower = stagingUrl.toLowerCase();
   const dangerousKeywords = ['prod', 'production', 'live', 'primary', 'customer'];
   for (const kw of dangerousKeywords) {
     // Check if host or path contains dangerous keyword (ignoring safe matches in passwords)
@@ -181,6 +180,11 @@ export async function runStagingVerification(): Promise<void> {
 
     await client.query('BEGIN');
     try {
+      // Locked payroll test runs are intentionally immutable. Temporarily disable
+      // only the two named application immutability triggers inside this isolated
+      // cleanup transaction; rollback re-enables them automatically on any failure.
+      await client.query('ALTER TABLE payroll_items DISABLE TRIGGER trg_payroll_item_lock_integrity');
+      await client.query('ALTER TABLE payroll_runs DISABLE TRIGGER trg_prevent_locked_payroll_modification');
       for (const organizationId of [TEST_ORG_ID, TEST_ORG_B_ID]) {
         await client.query('DELETE FROM payslips WHERE organization_id = $1', [organizationId]);
         await client.query('DELETE FROM payroll_items WHERE organization_id = $1', [organizationId]);
@@ -213,6 +217,8 @@ export async function runStagingVerification(): Promise<void> {
           ['staging-rls-manager@attendease.invalid', 'staging-rls-coworker@attendease.invalid'],
         ],
       );
+      await client.query('ALTER TABLE payroll_runs ENABLE TRIGGER trg_prevent_locked_payroll_modification');
+      await client.query('ALTER TABLE payroll_items ENABLE TRIGGER trg_payroll_item_lock_integrity');
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -325,7 +331,7 @@ export async function runStagingVerification(): Promise<void> {
         await migClient.query('BEGIN');
         await migClient.query(sql);
         await migClient.query(
-          'INSERT INTO public.attendease_schema_migrations (migration_name, checksum_sha256) VALUES ($1, $2)',
+          'INSERT INTO attendease_private.attendease_schema_migrations (migration_name, checksum_sha256) VALUES ($1, $2)',
           [file, checksum],
         );
         await migClient.query('COMMIT');
