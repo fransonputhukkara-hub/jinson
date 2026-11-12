@@ -201,7 +201,7 @@ USING (
 );
 
 -- Enforce same-tenant ownership for attendance correction employee references.
-DO $
+DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_corrections_employee_org'
@@ -212,7 +212,7 @@ BEGIN
       REFERENCES employees(id, organization_id) ON DELETE CASCADE;
   END IF;
 END;
-$;
+$$;
 
 -- A requester may create a correction only for their own employee row or
 -- another employee within the branch they are assigned to. The actor must be
