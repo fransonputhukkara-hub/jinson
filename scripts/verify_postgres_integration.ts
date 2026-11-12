@@ -595,6 +595,29 @@ export async function runPostgresVerification(): Promise<{
       message: !seesBranch2 ? 'Branch Manager sees only assigned Thrissur branch staff (Ernakulam hidden)' : 'Branch Manager saw unassigned branch!',
     });
 
+    // 8c: Employee accounts can read only their own employee profile and branch.
+    await db.exec(`SELECT set_config('request.jwt.claim.sub', '${userEmpId}', false);`);
+    const employeeVisibleRows = await db.query<{ id: string; branch_id: string }>(`
+      SELECT id, branch_id FROM employees;
+    `);
+    const employeeSelfOnly = employeeVisibleRows.rows.length === 1 && employeeVisibleRows.rows[0].id === emp1Id;
+    results.push({
+      step: '8. Real RLS & Role Context Validation',
+      name: 'Employee can read only their own employee record',
+      passed: employeeSelfOnly,
+      message: employeeSelfOnly ? 'Employee account sees only its linked employee row.' : `Employee account saw ${employeeVisibleRows.rows.length} employee rows.`,
+    });
+
+    const employeeBranchRows = await db.query<{ id: string }>(`
+      SELECT id FROM branches;
+    `);
+    const employeeBranchOnly = employeeBranchRows.rows.length === 1 && employeeBranchRows.rows[0].id === branch1Id;
+    results.push({
+      step: '8. Real RLS & Role Context Validation',
+      name: 'Employee can read only the assigned branch',
+      passed: employeeBranchOnly,
+      message: employeeBranchOnly ? 'Employee account sees only its linked branch.' : `Employee account saw ${employeeBranchRows.rows.length} branches.`,
+    });
     // 8c: Verify Audit Logs Immutability
     await db.exec(`SELECT set_config('request.jwt.claim.sub', '${userOwnerId}', false);`);
     let auditDeleteFailed = false;
