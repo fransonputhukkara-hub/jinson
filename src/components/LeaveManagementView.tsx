@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   CalendarOff, 
   PlusCircle, 
@@ -39,6 +39,10 @@ export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!employeeId && employees[0]) setEmployeeId(employees[0].id);
+  }, [employeeId, employees]);
+
   const employeeMap = new Map(employees.map(e => [e.id, e]));
 
   const filtered = leaveRequests.filter(req => {
@@ -48,6 +52,7 @@ export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!employeeId) { setError('Select an employee before submitting.'); return; }
     if (!reason.trim()) {
       setError('Please provide a reason for the leave application.');
       return;
