@@ -748,25 +748,34 @@ export default function App() {
         )}
 
         {currentTab === 'leave' && (
-          <LeaveManagementView
-            organizationId={activeOrganizationId}
-            leaveRequests={leaveRequests}
-            employees={employees}
-            onApplyLeave={handleApplyLeave}
-            onApproveLeave={handleApproveLeave}
-            onRejectLeave={handleRejectLeave}
-          />
+          <>
+            {isLive && (
+              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+                Live leave applications are saved. Approval decisions are temporarily disabled until approved leave can be applied to attendance summaries atomically and audited.
+              </div>
+            )}
+            <LeaveManagementView
+              organizationId={activeOrganizationId}
+              canDecideRequests={!isLive}
+              leaveRequests={leaveRequests}
+              employees={employees}
+              onApplyLeave={handleApplyLeave}
+              onApproveLeave={handleApproveLeave}
+              onRejectLeave={handleRejectLeave}
+            />
+          </>
         )}
 
         {currentTab === 'employees' && (
-          isLive && currentUser?.role !== 'company_owner' && currentUser?.role !== 'company_admin' ? (
+          isLive && !['company_owner', 'company_admin', 'branch_manager', 'employee'].includes(currentUser?.role || '') ? (
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
-              <h2 className="font-bold">Employee administration is restricted</h2>
-              <p className="mt-1 text-sm">Only organization owners and administrators can add or change employee records. Your account can view only the employee records permitted by its branch and role.</p>
+              <h2 className="font-bold">Employee records are restricted</h2>
+              <p className="mt-1 text-sm">Your organization role does not permit employee-directory access.</p>
             </div>
           ) : (
             <EmployeesView
               organizationId={activeOrganizationId}
+              canManage={!isLive || currentUser?.role === 'company_owner' || currentUser?.role === 'company_admin'}
               employees={employees}
               shifts={shifts}
               branches={branches}
