@@ -142,7 +142,7 @@ export default function App() {
         const [organizationRows, branchRows, employeeRows, summaryRows, correctionRows, leaveRows, shiftRows, deviceRows] = await Promise.all([
           dataService.getOrganizations(),
           dataService.getBranches(organizationId),
-          dataService.getEmployees(organizationId, currentUser?.assignedBranchId),
+          dataService.getEmployees(organizationId, currentUser?.assignedBranchId || (selectedBranchId && selectedBranchId !== 'all' ? selectedBranchId : undefined)),
           dataService.getAttendanceSummaries(organizationId),
           dataService.getAttendanceCorrections(organizationId),
           dataService.getLeaveRequests(organizationId),
@@ -158,11 +158,12 @@ export default function App() {
         setOrganizationName(selectedOrganization?.name || (isLive ? 'Organization' : DEMO_ORGANIZATION.name));
         setBranches(visibleBranches);
         setEmployees(employeeRows);
-        setSummaries(summaryRows);
-        setCorrections(correctionRows);
-        setLeaveRequests(leaveRows);
+        const visibleEmployeeIds = new Set(employeeRows.map(employee => employee.id));
+        setSummaries(summaryRows.filter(summary => visibleEmployeeIds.has(summary.employee_id)));
+        setCorrections(correctionRows.filter(correction => visibleEmployeeIds.has(correction.employee_id)));
+        setLeaveRequests(leaveRows.filter(request => visibleEmployeeIds.has(request.employee_id)));
         setShifts(shiftRows);
-        setDevices(deviceRows);
+        setDevices(deviceRows.filter(device => !selectedBranchId || device.branch_id === selectedBranchId));
         if (isLive) setNotifications([]);
         if (visibleBranches.length > 0) {
           const preferredBranch = currentUser?.assignedBranchId;
@@ -193,7 +194,7 @@ export default function App() {
 
     void loadData();
     return () => { isMounted = false; };
-  }, [dataService, isLive, activeOrganizationId, currentUser?.id, currentUser?.assignedBranchId]);
+  }, [dataService, isLive, activeOrganizationId, currentUser?.id, currentUser?.assignedBranchId, selectedBranchId]);
 
   // Real-time IST Clock
   useEffect(() => {
@@ -528,6 +529,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3 text-xs text-slate-600">
+            {isLive && currentUser && (
+              <button
+                type="button"
+                onClick={() => void authService.signOut().catch(error => showToast(error instanceof Error ? error.message : 'Unable to sign out.'))}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Sign out
+              </button>
+            )}
             <div className="flex items-center gap-2 font-mono tabular-nums bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
               <Clock className="w-4 h-4 text-slate-600" />
               <span className="font-bold text-slate-900 text-xs sm:text-sm">{currentTime || '09:30:00 AM'}</span>
