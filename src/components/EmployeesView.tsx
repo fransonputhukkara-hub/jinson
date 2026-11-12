@@ -43,7 +43,6 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
-  const [deviceUserId, setDeviceUserId] = useState('');
   const [designation, setDesignation] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -98,7 +97,6 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
     setFirstName('');
     setLastName('');
     setEmployeeCode('');
-    setDeviceUserId('');
     setDesignation('');
     setPhone('');
     setEmail('');
@@ -138,7 +136,6 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
             type="button"
             onClick={() => {
               setEmployeeCode(`JCF-00${employees.length + 1}`);
-              setDeviceUserId(`10${employees.length + 1}`);
               setIsAddModalOpen(true);
             }}
             className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs sm:text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 shadow-xs shrink-0"
@@ -158,7 +155,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 <th className="py-3 px-4">Employee</th>
                 <th className="py-3 px-3">Designation &amp; Role</th>
                 <th className="py-3 px-3">Branch</th>
-                <th className="py-3 px-3">Biometric Link</th>
+                <th className="py-3 px-3">Device Enrollment</th>
                 <th className="py-3 px-3">Shift Timing</th>
                 <th className="py-3 px-3">Status</th>
                 <th className="py-3 px-4 text-right">Actions</th>
@@ -168,8 +165,6 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
               {filtered.map((emp) => {
                 const branch = branchMap.get(emp.branch_id);
                 const shift = emp.shift_id ? shiftMap.get(emp.shift_id) : undefined;
-                // Device hardware id mapping
-                const deviceHwId = emp.id.replace('emp-', '10');
 
                 return (
                   <tr key={emp.id} className="hover:bg-slate-50/80 transition-colors">
@@ -195,7 +190,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                     <td className="py-3.5 px-3">
                       <div className="inline-flex items-center gap-1.5 bg-slate-100 px-2 py-1 rounded text-xs font-mono text-slate-700">
                         <Fingerprint className="w-3.5 h-3.5 text-slate-600" />
-                        <span>HW ID: {deviceHwId}</span>
+                        <span>Not linked</span>
                       </div>
                     </td>
 
@@ -287,28 +282,17 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-700 font-semibold mb-1">Employee App Code *</label>
-                  <input
-                    type="text"
-                    required
-                    value={employeeCode}
-                    onChange={(e) => setEmployeeCode(e.target.value)}
-                    placeholder="e.g. JCF-008"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-700 font-semibold mb-1">Terminal User ID (Hikvision)</label>
-                  <input
-                    type="text"
-                    value={deviceUserId}
-                    onChange={(e) => setDeviceUserId(e.target.value)}
-                    placeholder="e.g. 108"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-mono"
-                  />
-                </div>
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Employee App Code *</label>
+                <input
+                  type="text"
+                  required
+                  value={employeeCode}
+                  onChange={(e) => setEmployeeCode(e.target.value)}
+                  placeholder="e.g. JCF-008"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-mono"
+                />
+                <p className="mt-1 text-xs text-slate-500">The terminal user ID is assigned and linked during physical device enrollment. This form does not create a hardware mapping.</p>
               </div>
 
               <div>
