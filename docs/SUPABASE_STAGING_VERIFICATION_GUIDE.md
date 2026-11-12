@@ -77,6 +77,8 @@ The runner applies these ten forward-only migration files in order:
 6. `20250101000005_concurrency_and_schema_hardening.sql` — native UUID defaults, security-definer function permissions and timestamp hardening.
 7. `20250101000006_remediation_and_security_hardening.sql` — leave requests, tenant-composite foreign keys, user-profile protection and role-escalation/audit triggers.
 8. `20250101000007_branch_scope_rls_hardening.sql` — branch-scoped reads, employee self-read, profile privacy, raw device-event write restrictions and scoped corrections/leave/device access.
+9. `20250101000008_remaining_tenant_and_payroll_integrity.sql` — same-tenant foreign keys for event/device, shift/department, salary and payslip relationships; draft-only payroll creation and database-owned lock timestamps.
+10. `20250101000009_decision_actor_integrity.sql` — derives leave/correction decision actors from the authenticated session and makes decided requests immutable.
 
 The runner refuses to adopt an existing schema if it finds application tables but cannot find its own migration history. Use a fresh staging database for the first run. Applied migrations are tracked by filename and SHA-256 checksum. A changed checksum for an already-applied migration is an error, not an automatic rewrite.
 
