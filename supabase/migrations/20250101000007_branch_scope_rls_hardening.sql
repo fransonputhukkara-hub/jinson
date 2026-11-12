@@ -15,6 +15,73 @@ ON user_profiles FOR SELECT
 TO authenticated
 USING (id = auth.uid() OR auth_is_platform_admin());
 
+-- Branch managers and employees should not enumerate unrelated branches.
+DROP POLICY IF EXISTS "Users can view branches within their organization" ON branches;
+CREATE POLICY "Role scoped branch read"
+ON branches FOR SELECT
+TO authenticated
+USING (
+  auth_is_platform_admin()
+  OR (
+    organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
+    AND (
+      auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
+      OR (
+        auth_user_role_in_org(organization_id) IN ('branch_manager', 'employee')
+        AND id = auth_user_assigned_branch(organization_id)
+      )
+    )
+  )
+);
+
+-- Organization membership lookup is self-scoped for ordinary users. Owners/admins
+-- retain the ability to administer their organization roster.
+DROP POLICY IF EXISTS "Users can view members in their organization" ON organization_members;
+CREATE POLICY "Users can view own membership or organization roster admins"
+ON organization_members FOR SELECT
+TO authenticated
+USING (
+  user_id = auth.uid()
+  OR auth_is_platform_admin()
+  OR (
+    auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
+    AND organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
+  )
+);
+
+-- Shifts and departments can contain branch-specific operational details.
+DROP POLICY IF EXISTS "Users can view shifts in their organization" ON shifts;
+CREATE POLICY "Role scoped shift read"
+ON shifts FOR SELECT
+TO authenticated
+USING (
+  auth_is_platform_admin()
+  OR (
+    organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
+    AND (
+      auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
+      OR branch_id IS NULL
+      OR branch_id = auth_user_assigned_branch(organization_id)
+    )
+  )
+);
+
+DROP POLICY IF EXISTS "Users can view departments in their organization" ON departments;
+CREATE POLICY "Role scoped department read"
+ON departments FOR SELECT
+TO authenticated
+USING (
+  auth_is_platform_admin()
+  OR (
+    organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
+    AND (
+      auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
+      OR branch_id IS NULL
+      OR branch_id = auth_user_assigned_branch(organization_id)
+    )
+  )
+);
+
 -- Daily attendance summaries must follow the same branch boundary as employees.
 DROP POLICY IF EXISTS "Users can view daily summaries in their organization" ON attendance_daily_summaries;
 CREATE POLICY "Role scoped daily attendance summary read"
