@@ -18,6 +18,7 @@ import { Employee, Shift, Branch } from '../types/database.types';
 
 interface EmployeesViewProps {
   organizationId: string;
+  canManage?: boolean;
   employees: Employee[];
   shifts: Shift[];
   branches: Branch[];
@@ -27,6 +28,7 @@ interface EmployeesViewProps {
 
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
   organizationId,
+  canManage = true,
   employees,
   shifts,
   branches,
@@ -131,19 +133,20 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           </select>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            // Suggest next code
-            setEmployeeCode(`JCF-00${employees.length + 1}`);
-            setDeviceUserId(`10${employees.length + 1}`);
-            setIsAddModalOpen(true);
-          }}
-          className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs sm:text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 shadow-xs shrink-0"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>Add Employee</span>
-        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => {
+              setEmployeeCode(`JCF-00${employees.length + 1}`);
+              setDeviceUserId(`10${employees.length + 1}`);
+              setIsAddModalOpen(true);
+            }}
+            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs sm:text-sm font-semibold transition-colors flex items-center justify-center gap-1.5 shadow-xs shrink-0"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Add Employee</span>
+          </button>
+        )}
       </div>
 
       {/* Employees Grid / Table */}
@@ -218,17 +221,19 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onToggleStatus(emp.id)}
-                        className={`text-xs font-semibold px-2.5 py-1 rounded transition-colors ${
+                      {canManage ? (
+                        <button
+                          type="button"
+                          onClick={() => onToggleStatus(emp.id)}
+                          className={`text-xs font-semibold px-2.5 py-1 rounded transition-colors ${
                           emp.is_active
                             ? 'text-slate-600 hover:text-rose-600 hover:bg-rose-50'
                             : 'text-emerald-700 hover:bg-emerald-50'
                         }`}
                       >
-                        {emp.is_active ? 'Deactivate' : 'Reactivate'}
-                      </button>
+                          {emp.is_active ? 'Deactivate' : 'Reactivate'}
+                        </button>
+                      ) : <span className="text-xs text-slate-400">View only</span>}
                     </td>
                   </tr>
                 );
