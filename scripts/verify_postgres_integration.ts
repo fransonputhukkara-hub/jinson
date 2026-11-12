@@ -165,7 +165,8 @@ export async function runPostgresVerification(): Promise<{
     INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status) VALUES
     ('${runLockedId}', '${orgAId}', '2026-09-01', '2026-09-30', 'September 2026', 'draft'),
     ('${runDraftId}', '${orgAId}', '2026-10-01', '2026-10-31', 'October 2026', 'draft'),
-    ('${runReviewId}', '${orgAId}', '2026-11-01', '2026-11-30', 'November 2026', 'review');
+    ('${runReviewId}', '${orgAId}', '2026-11-01', '2026-11-30', 'November 2026', 'draft');
+    UPDATE payroll_runs SET status = 'review' WHERE id = '${runReviewId}';
 
     INSERT INTO payroll_items (id, payroll_run_id, organization_id, employee_id, gross_pay, net_pay) VALUES
     ('10101010-1010-1010-1010-101010101010', '${runLockedId}', '${orgAId}', '${emp1Id}', 30000.00, 29000.00),
@@ -705,6 +706,34 @@ export async function runPostgresVerification(): Promise<{
   }
 
   // =========================================================================
+  // Step 10b: Payroll runs cannot be inserted directly in a non-draft state.
+  // =========================================================================
+  try {
+    let lockedInsertRejected = false;
+    try {
+      await db.exec(`
+        INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status, locked_at)
+        VALUES ('d0000000-0000-0000-0000-000000000099', '${orgAId}', '2027-03-01', '2027-03-31', 'Direct Locked Insert', 'locked', now());
+      `);
+    } catch (error: any) {
+      lockedInsertRejected = error.code === '23514' || error.message.includes('must be created in draft status');
+    }
+    results.push({
+      step: '10. Payroll Creation State',
+      name: 'Direct insertion of a locked payroll run is rejected',
+      passed: lockedInsertRejected,
+      message: lockedInsertRejected ? 'Database requires payroll runs to start in draft status.' : 'A payroll run was inserted directly as locked.',
+    });
+  } catch (error: any) {
+    results.push({
+      step: '10. Payroll Creation State',
+      name: 'Direct locked insertion guard',
+      passed: false,
+      message: error.message,
+    });
+  }
+
+  // =========================================================================
   // Step 11: Draft vs Locked Payroll Deletion Integrity (Milestone 4.1)
   // =========================================================================
   try {
@@ -746,7 +775,9 @@ export async function runPostgresVerification(): Promise<{
     const testLockedTimestamp = await db.query<{ locked_at: string }>(
       `SELECT locked_at FROM payroll_runs WHERE id = '${testLockedRunId}'`,
     );
-    const generatedLockTimestamp = new Date(testLockedTimestamp.rows[0].locked_at).getUTCFullYear() > 2020;
+    const generatedLockTimestamp =
+      new Date(testLockedTimestamp.rows[0].locked_at).getUTCFullYear() > 2020 &&
+      Math.abs(new Date(testLockedTimestamp.rows[0].locked_at).getTime() - new Date('2000-01-01T00:00:00Z').getTime()) > 86400000;
 
     let lockedDeleteBlocked = false;
     try {
