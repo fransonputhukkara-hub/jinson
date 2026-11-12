@@ -1,0 +1,26 @@
+[Unit]
+Description=AttendEase Hikvision HTTP Listening Receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=attendease
+Group=attendease
+WorkingDirectory=/opt/attendease-hikvision-receiver
+EnvironmentFile=/etc/attendease/hikvision-receiver.env
+ExecStart=/usr/bin/node /opt/attendease-hikvision-receiver/src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
