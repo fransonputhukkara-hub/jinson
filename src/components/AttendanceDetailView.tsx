@@ -29,7 +29,7 @@ export const AttendanceDetailView: React.FC<AttendanceDetailViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<string>(initialFilter);
-  const [selectedDate, setSelectedDate] = useState('2026-10-15');
+  const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
 
   // Employee lookup
   const employeeMap = new Map(employees.map(e => [e.id, e]));
