@@ -13,6 +13,8 @@ import { AttendanceCorrection, Employee, AttendanceDailySummary } from '../types
 interface AttendanceCorrectionModalProps {
   isOpen: boolean;
   onClose: () => void;
+  organizationId: string;
+  requestedByUserId: string;
   employees: Employee[];
   summaries: AttendanceDailySummary[];
   preSelectedEmployeeId?: string;
@@ -22,13 +24,15 @@ interface AttendanceCorrectionModalProps {
 export const AttendanceCorrectionModal: React.FC<AttendanceCorrectionModalProps> = ({
   isOpen,
   onClose,
+  organizationId,
+  requestedByUserId,
   employees,
   summaries,
   preSelectedEmployeeId,
   onSubmit,
 }) => {
   const [employeeId, setEmployeeId] = useState(preSelectedEmployeeId || employees[0]?.id || '');
-  const [targetDate, setTargetDate] = useState('2026-10-15');
+  const [targetDate, setTargetDate] = useState(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
   const [correctionType, setCorrectionType] = useState<AttendanceCorrection['correction_type']>('missing_out');
   const [proposedCheckIn, setProposedCheckIn] = useState('09:30');
   const [proposedCheckOut, setProposedCheckOut] = useState('18:00');
@@ -55,10 +59,10 @@ export const AttendanceCorrectionModal: React.FC<AttendanceCorrectionModalProps>
     const adjustedOut = `${targetDate}T${proposedCheckOut}:00+05:30`;
 
     onSubmit({
-      organization_id: 'org-jinson-chit-fund',
+      organization_id: organizationId,
       employee_id: employeeId,
       target_date: targetDate,
-      requested_by: 'emp-002', // Anoop Paul (Branch Manager)
+      requested_by: requestedByUserId,
       status: 'pending',
       correction_type: correctionType,
       original_summary: currentSummary ? { ...currentSummary } : undefined,
