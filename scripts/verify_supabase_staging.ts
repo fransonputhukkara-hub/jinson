@@ -254,7 +254,7 @@ export async function runStagingVerification(): Promise<void> {
     }
 
     // 2. Migration Execution (forward-only, checksummed, transactional)
-    console.log('\n--- Applying verified migrations 000000 through 000006 ---');
+    console.log('\n--- Applying verified migrations 000000 through 000007 ---');
     const migrationFiles = [
       '20250101000000_initial_schema.sql',
       '20250101000001_tenant_isolation_rls.sql',
@@ -591,8 +591,8 @@ export async function runStagingVerification(): Promise<void> {
       rlsClient.release();
     }
 
-    // 7. Transaction Pooling & Session Isolation Check
-    console.log('\n--- Verifying Transaction-Pooling Compatibility ---');
+    // 7. SET LOCAL hygiene check (does not claim to certify a separate transaction pooler).
+    console.log('\n--- Verifying transaction-scoped session-setting cleanup ---');
     const poolClient = await pool.connect();
     try {
       // Verify SET LOCAL cleans up on COMMIT, avoiding pooler contamination
@@ -606,7 +606,7 @@ export async function runStagingVerification(): Promise<void> {
       const pooledClean = subRes.rows[0].sub === '00000000-0000-0000-0000-000000000001' && !postTxRes.rows[0].sub;
       results.push({
         suite: '5. Connection Pooling Compatibility',
-        test: 'Transaction-Scoped Session Settings (SET LOCAL)',
+        test: 'Transaction-scoped setting is cleared on commit (same server session)',
         passed: pooledClean,
         message: pooledClean ? 'SET LOCAL cleanly discarded at transaction commit' : 'Session leak detected',
       });
@@ -630,7 +630,7 @@ export async function runStagingVerification(): Promise<void> {
       console.log('All Staging Verification Checks Passed Successfully!');
     } else {
       console.error('Some checks failed.');
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (err: any) {
     console.error('\nVerification halted with error:');
