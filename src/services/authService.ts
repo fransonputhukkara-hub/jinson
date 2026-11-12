@@ -81,6 +81,13 @@ class AuthService {
   private async resolveAuthenticatedUser(user: SupabaseAuthUser | null): Promise<AuthUser | null> {
     const requestId = ++this.sessionResolution;
 
+    // Clear the previous identity before resolving a different session. This
+    // prevents a just-switched account from briefly seeing the prior user's data.
+    if (user && this.currentUser && user.id !== this.currentUser.id) {
+      this.currentUser = null;
+      this.notifyListeners(null);
+    }
+
     if (!user || !supabase) {
       this.currentUser = null;
       this.notifyListeners(null);
