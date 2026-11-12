@@ -6,10 +6,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
-import { DemoBanner } from './components/DemoBanner';
 import { AttendanceSummaryCards } from './components/AttendanceSummaryCards';
-import { DeviceHealthCard } from './components/DeviceHealthCard';
-import { PayrollStatusCard } from './components/PayrollStatusCard';
 import { NotificationsCard } from './components/NotificationsCard';
 import { QuickLinks } from './components/QuickLinks';
 import { AttendanceDetailView } from './components/AttendanceDetailView';
@@ -110,7 +107,7 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    if (isLive && !currentUser) {
+    if (!currentUser) {
       setBranches([]);
       setDevices([]);
       setEmployees([]);
@@ -159,7 +156,7 @@ export default function App() {
         setLeaveRequests(leaveRows.filter(request => visibleEmployeeIds.has(request.employee_id)));
         setShifts(shiftRows);
         setDevices(deviceRows.filter(device => !selectedBranchId || device.branch_id === selectedBranchId));
-        if (isLive) setNotifications([]);
+        setNotifications([]);
         if (visibleBranches.length > 0) {
           const preferredBranch = currentUser?.assignedBranchId;
           setSelectedBranchId(previous => {
@@ -174,7 +171,7 @@ export default function App() {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[DataService] Failed to load organization data:', msg);
-        if (isMounted && isLive) {
+        if (isMounted) {
           setBranches([]);
           setDevices([]);
           setEmployees([]);
@@ -630,22 +627,11 @@ export default function App() {
                 <button type="button" onClick={() => setCurrentTab('devices')} className="mt-3 text-sm font-semibold underline">Open device management</button>
               </div>
 
-              {isLive ? (
-                <div className="bg-white rounded-xl border border-amber-200 p-5">
-                  <h3 className="font-bold text-slate-900">Payroll readiness</h3>
-                  <p className="mt-1 text-sm text-slate-600">Live payroll totals are not yet calculated from approved attendance and customer-confirmed salary rules. The preview is disabled in live mode.</p>
-                </div>
-              ) : (
-                <PayrollStatusCard
-                  currentPeriod="October 2026"
-                  currentStatus="draft"
-                  eligibleEmployeesCount={totalEmployees}
-                  totalGrossEstimate={224000}
-                  previousPeriod="September 2026"
-                  previousStatus="locked"
-                  onOpenPayroll={() => setCurrentTab('payroll')}
-                />
-              )}
+              <div className="bg-white rounded-xl border border-slate-200 p-5">
+                <h3 className="font-bold text-slate-900">Payroll readiness</h3>
+                <p className="mt-1 text-sm text-slate-600">Payroll totals remain unavailable until salary data and customer-approved payroll rules are configured.</p>
+                <button type="button" onClick={() => setCurrentTab('payroll')} className="mt-3 text-sm font-semibold underline">Open payroll</button>
+              </div>
             </div>
 
             {/* Bottom Section: Action Items & Quick Links */}
