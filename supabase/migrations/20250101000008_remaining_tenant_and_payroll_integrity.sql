@@ -133,7 +133,7 @@ CREATE OR REPLACE FUNCTION check_payroll_lock_immutability()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
