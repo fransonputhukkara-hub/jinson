@@ -20,26 +20,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ summaries, employees }
   const [reportType, setReportType] = useState<'daily' | 'monthly' | 'sync_audit'>('daily');
   const employeeMap = new Map(employees.map(e => [e.id, e]));
 
-  // Mock sync history logs
-  const syncLogs = [
-    {
-      id: 'sync-01',
-      time: '2026-10-15 09:45:10 IST',
-      device: 'Hikvision DS-K1T320MFWX (Thrissur)',
-      status: 'pending_edge_service',
-      pulled: 0,
-      details: 'Browser POC simulated check. Awaiting local connector deployment on 192.168.1.120.',
-    },
-    {
-      id: 'sync-02',
-      time: '2026-10-15 09:00:00 IST',
-      device: 'System Scheduler',
-      status: 'success',
-      pulled: 7,
-      details: 'Daily attendance summary table initialized for Jinson Chit Fund.',
-    },
-  ];
-
+  const syncLogs: Array<{id:string;time:string;device:string;status:string;pulled:number;details:string}> = [];
   const handleDownloadReport = () => {
     alert('Exporting verified report archive (CSV)...');
   };
@@ -95,7 +76,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ summaries, employees }
       {reportType === 'daily' && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
           <h3 className="font-bold text-slate-900 text-sm mb-3">
-            Today's Attendance Register Summary (15 Oct 2026)
+            Attendance Register
           </h3>
           <div className="space-y-2 text-xs">
             {summaries.map(s => {
