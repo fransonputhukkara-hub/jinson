@@ -1,147 +1,110 @@
-# AttendEase Milestone 4 — Supabase Staging Verification Guide
+# AttendEase — Isolated Supabase Staging Verification
 
-This guide details the procedure for deploying and validating the AttendEase database schema and security policies on an isolated **Supabase Staging Project** before customer onboarding.
+This procedure is for a newly created, isolated staging Supabase project. It is not a production deployment guide.
 
----
+## 1. Current safety posture
 
-## 1. Safety Audit & Production Protection Guarantees
+- Keep `VITE_DEMO_MODE=true` for the deployed Vercel demonstration.
+- Never put a database connection string, database password, Supabase service-role key, or Supabase secret key into Vercel browser variables.
+- The staging verification runner is a local Node.js script. Run it from a trusted development computer, not in the browser and not in Vercel.
+- The runner refuses a non-empty or previously migrated database when it cannot establish its own migration history.
+- The runner applies migrations transactionally and records SHA-256 checksums in the non-API-exposed `attendease_private` schema.
+- The runner uses a synthetic test tenant with reserved UUIDs. Cleanup temporarily disables only the two named payroll immutability triggers inside one transaction, removes only marked test records, and re-enables the triggers before commit. A failed cleanup transaction is rolled back and reported as failure.
+- No production URL or credential should ever be used with this script.
 
-Before executing any operations, the verification runner enforces the following safety barriers:
+## 2. Supabase connection formats
 
-1. **Mandatory Project Reference Validation (`EXPECTED_STAGING_PROJECT_REF`):**
-   - Extracts the Supabase project reference (`postgres.[ref]:...`) from the connection URL.
-   - If `EXPECTED_STAGING_PROJECT_REF` is set, verifies that the connection string strictly targets that project reference.
-   - Rejects the operation if the reference does not match.
+Open the staging project in Supabase Dashboard and use **Connect → Direct connection → URI** when your network supports IPv6. The direct connection URL normally resembles:
 
-2. **Prohibited Keyword Guard:**
-   - Evaluates target hosts and database names against prohibited keywords (`prod`, `production`, `live`, `primary`, `customer`).
-   - Aborts immediately if any prohibited keyword is detected.
-
-3. **Strict Credential Redaction:**
-   - All connection strings logged or stored during testing mask credentials: `postgresql://user:********@host:port/database`.
-   - Error stack traces and messages are scrubbed to prevent password leakage in CI/CD or console output.
-
-4. **Non-Destructive Schema Evolution:**
-   - Migrations 000000 through 000005 contain zero `DROP TABLE`, zero `TRUNCATE`, and zero destructive column deletions.
-   - All table creations use `CREATE TABLE IF NOT EXISTS`, and function updates use `CREATE OR REPLACE FUNCTION`.
-
-5. **Strict Test Data Scoping & Guaranteed Teardown:**
-   - Concurrency and timezone tests only use deterministic test UUIDs (`e0000000-0000-4000-a000-...`).
-   - A dedicated `cleanupTestData()` routine runs both before and inside the `finally` block to remove all test rows. No customer or baseline rows are ever touched.
-
-6. **Statement Timeouts & Deadlock Watchdogs:**
-   - Connections enforce a 10,000ms statement timeout (`statement_timeout = 10000;`).
-   - Concurrency promises use 8,000ms `Promise.race` timeouts to prevent hanging indefinitely.
-
----
-
-## 2. Environment & Data Isolation Architecture
-
-| Environment | Purpose | Database | State / Credentials |
-| :--- | :--- | :--- | :--- |
-| **Local / Preview** | UI testing, demos, rapid iteration | In-Memory / PGlite / Demo Mock Store | `VITE_DEMO_MODE=true` (Zero external network dependencies) |
-| **Supabase Staging** | Concurrency verification, RLS stress tests, migration rehearsal | Isolated hosted PostgreSQL 15+ Supabase project | `STAGING_DATABASE_URL` configured in `.env.local` |
-| **Production** | Live customer operations | Production Supabase instance | **LOCKED & DISABLED** until customer approves policies |
-
----
-
-## 3. Setting Up the Isolated Supabase Staging Project
-
-### Step 3.1: Provision Staging Project
-1. Log into your [Supabase Dashboard](https://app.supabase.com).
-2. Click **New Project** and configure:
-   - **Name:** `attendease-staging` (do not use generic or production names)
-   - **Database Password:** Generate a secure password and store it in your team secrets manager.
-   - **Region:** Select the region closest to your intended customer deployment (e.g., `ap-south-1` Mumbai or `ap-southeast-1` Singapore).
-   - **Pricing Plan:** Free or Pro tier.
-
-### Step 3.2: Retrieve Connection Strings
-Navigate to **Project Settings** → **Database** → **Connection string**:
-1. **Direct Connection (Session Mode, Port 5432):**
-   ```text
-   postgresql://postgres.[project-ref]:[DB_PASSWORD]@aws-0-[region].pooler.supabase.com:5432/postgres
-   ```
-   *Required for applying schema migrations, running DDL, and multi-connection concurrency lock tests.*
-
-2. **Transaction Pooler Connection (Supavisor / PgBouncer, Port 6543):**
-   ```text
-   postgresql://postgres.[project-ref]:[DB_PASSWORD]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true
-   ```
-   *Used for client application query pooling. Not recommended for DDL migrations.*
-
----
-
-## 4. Configuring Staging Credentials Locally
-
-Create or edit your local `.env.local` file (which is git-ignored):
-
-```bash
-# Isolated Staging Database Connection (Port 5432 required for migrations & lock tests)
-STAGING_DATABASE_URL="postgresql://postgres.[project-ref]:[DB_PASSWORD]@aws-0-[region].pooler.supabase.com:5432/postgres"
-
-# Safety verification: verify target matches expected project ref
-EXPECTED_STAGING_PROJECT_REF="[project-ref]"
-
-# Optional: Staging REST / Auth API Keys (for client integration testing)
-VITE_STAGING_SUPABASE_URL="https://[project-ref].supabase.co"
-VITE_STAGING_SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```text
+postgresql://postgres:[YOUR-PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres
 ```
 
----
+If direct IPv6 connectivity is unavailable, choose **Session pooler → URI**. It normally resembles:
 
-## 5. Migration Execution Sequence
+```text
+postgresql://postgres.[PROJECT-REF]:[YOUR-PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres
+```
 
-AttendEase includes six sequential migrations in `/supabase/migrations/`:
+Copy the exact URI from the staging project's dashboard. Do not manually guess the host or username. The verification runner accepts the Supabase direct hostname format and the session-pooler username format on port 5432. It rejects transaction-pooler port 6543 for migrations and row-lock tests.
 
-| Migration File | Function & Changes |
-| :--- | :--- |
-| `20250101000000_initial_schema.sql` | Core domain tables (`organizations`, `branches`, `employees`, `attendance_records`, `leave_requests`, `payroll_runs`, `payroll_items`, `audit_logs`). Non-destructive `CREATE TABLE IF NOT EXISTS`. |
-| `20250101000001_tenant_isolation_rls.sql` | RLS enablement, tenant/branch isolation policies, initial auth helper functions. |
-| `20250101000002_security_hardening_and_payroll.sql` | Search path hardening (`search_path = public`), trigger locks on `payroll_runs` and `payroll_items`, immutable audit log triggers. |
-| `20250101000003_locked_payroll_child_integrity.sql` | Row-level locking concurrency (`SELECT ... FOR SHARE`) in `check_payroll_item_lock_integrity()`, preventing parent-child lock race conditions and reparenting attacks. |
-| `20250101000004_fix_employee_rls_recursion.sql` | `SECURITY DEFINER` helper functions (`auth_current_employee_id`, `auth_current_employee_branch_id`) to eliminate infinite recursion in employee branch policies. |
-| `20250101000005_concurrency_and_schema_hardening.sql` | Universal native `gen_random_uuid()`, UTC timestamp sanitization (`COALESCE(NEW.locked_at, now())`), revoking `PUBLIC`/`anon` EXECUTE grants on SECURITY DEFINER functions. |
+Do not paste the password or full connection URI into chat, AI prompts, screenshots, GitHub, or Vercel settings.
 
----
+## 3. Local staging variables (PowerShell)
 
-## 6. Automated Staging Verification Suite
+Use a local terminal in the AttendEase repository. These are server-side database credentials and must remain local:
 
-Run the automated verification suite directly from the terminal:
-
-```bash
+```powershell
+$env:STAGING_DATABASE_URL = "YOUR_STAGING_DATABASE_URI"
+$env:EXPECTED_STAGING_PROJECT_REF = "YOUR_EXACT_STAGING_PROJECT_REF"
 npm run verify:staging
 ```
 
-### What the Suite Validates:
+For your existing staging project, the expected project reference previously confirmed from the project URL is:
 
-1. **Pre-flight & Host Verification:**
-   - Detects remote PostgreSQL engine version (PostgreSQL 15+).
-   - Validates project reference matches `EXPECTED_STAGING_PROJECT_REF`.
-   - Validates connection health and SSL negotiation.
+```text
+qczjagiecgypheayjpru
+```
 
-2. **Sequential Schema Migration:**
-   - Applies migrations 000000 through 000005 in order.
-   - Stops on the first failure and sanitizes all error output.
+Set that value only after you have confirmed that the connection URI belongs to `attendease-staging`.
 
-3. **Deterministic Two-Connection Concurrency Lock Testing:**
-   - Opens two concurrent connections (`conn1` and `conn2`) to the remote staging database.
-   - **Ordering 1 (Parent Lock precedes Child Mutation):**
-     1. `conn1` begins transaction and locks parent run: `UPDATE payroll_runs SET status = 'locked' WHERE id = ...;` (uncommitted).
-     2. `conn2` concurrently attempts `INSERT INTO payroll_items ...;`
-     3. Because of `SELECT ... FOR SHARE` in `check_payroll_item_lock_integrity()`, `conn2` acquires row lock and blocks on `conn1`.
-     4. `conn1` commits.
-     5. `conn2` unblocks, immediately inspects parent status, and fails with `23000 integrity_constraint_violation` (`Cannot insert payroll item: target payroll run is locked and immutable`).
-   - **Ordering 2 (Child Insertion precedes Parent Lock):**
-     1. `conn1` inserts child item (holding `FOR SHARE` on parent row).
-     2. `conn2` attempts to lock parent run.
-     3. `conn2` waits until `conn1` finishes, ensuring child changes cannot slip into a finalized run post-facto.
+The script loads `.env.local` before `.env`, while preserving variables already set in the shell. Both files are git-ignored. Do not commit them.
 
-4. **UTC Timestamp & Timezone Skew Verification:**
-   - Executes locking transactions while setting session timezone to `Asia/Kolkata` (UTC+05:30).
-   - Verifies `locked_at` stored timestamp matches true UTC wall-clock time within 5,000ms.
+## 4. Frontend Vercel variables — separate from staging credentials
 
-5. **Transaction Pooling Compatibility (Port 6543 / Supavisor):**
-   - Verifies all transaction-scoped state relies on `SET LOCAL` rather than persistent session settings, preventing state leakage across connections in pooled mode.
+These are only for the Vite browser application when a reviewed live-mode release is ready:
 
-6. **Teardown & Cleanup:**
-   - Automatically removes all test rows created under the `e0000000-0000-4000-a000-...` UUID namespace.
+| Variable | Purpose |
+|---|---|
+| `VITE_DEMO_MODE` | Keep `true` until live-mode testing is complete. |
+| `VITE_APP_ENV` | `preview`, `staging`, or `production` for frontend labeling/monitoring. |
+| `VITE_SUPABASE_URL` | Supabase project API URL. |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser-safe Supabase publishable key; legacy `VITE_SUPABASE_ANON_KEY` is also supported. |
+| `VITE_SENTRY_DSN` | Optional error-monitoring DSN. |
+| `VITE_DEVICE_CONNECTOR_URL` | Optional future branch Edge Connector URL. |
+
+Do not add `STAGING_DATABASE_URL` or `EXPECTED_STAGING_PROJECT_REF` to Vercel. Never use `service_role` or a Supabase secret key in any `VITE_*` variable.
+
+## 5. Migrations applied by the verification runner
+
+The runner applies these eight forward-only migration files in order:
+
+1. `20250101000000_initial_schema.sql` — organizations, branches, memberships, employees, shifts, devices, attendance events, daily summaries and audit-log foundation.
+2. `20250101000001_tenant_isolation_rls.sql` — initial RLS enablement, tenant policies and helper functions.
+3. `20250101000002_security_hardening_and_payroll.sql` — role and employee policies, attendance corrections, payroll schema and payroll immutability.
+4. `20250101000003_locked_payroll_child_integrity.sql` — payroll child-row locking, immutability and reparenting protection.
+5. `20250101000004_fix_employee_rls_recursion.sql` — SECURITY DEFINER employee identity/branch helper functions and employee read policy.
+6. `20250101000005_concurrency_and_schema_hardening.sql` — native UUID defaults, security-definer function permissions and timestamp hardening.
+7. `20250101000006_remediation_and_security_hardening.sql` — leave requests, tenant-composite foreign keys, user-profile protection and role-escalation/audit triggers.
+8. `20250101000007_branch_scope_rls_hardening.sql` — branch-scoped reads, employee self-read, profile privacy, raw device-event write restrictions and scoped corrections/leave/device access.
+
+The runner refuses to adopt an existing schema if it finds application tables but cannot find its own migration history. Use a fresh staging database for the first run. Applied migrations are tracked by filename and SHA-256 checksum. A changed checksum for an already-applied migration is an error, not an automatic rewrite.
+
+## 6. What the verification runner tests
+
+- PostgreSQL 15 or later server version.
+- Exact project-reference match for the recognized Supabase connection format.
+- TLS certificate verification.
+- Sequential, transactional application of migrations 000000 through 000007.
+- Two independent PostgreSQL connections and both payroll-lock transaction orderings. It observes a real PostgreSQL lock wait using `pg_stat_activity`; it does not treat a fixed delay as proof.
+- SQLSTATE and lock outcome for the locked-payroll child insertion.
+- `locked_at` timestamp behavior under an Asia/Kolkata session timezone.
+- Hosted staging RLS behavior under the `authenticated` role with synthetic request-claim settings: organization, branch, employee, daily-summary and profile read isolation.
+- Denial of ordinary authenticated-client inserts into raw attendance events.
+- Transaction-local session setting cleanup on the same server session. This is a session-setting hygiene check; it is not a separate certification of transaction-pooler behavior.
+
+The RLS runner uses synthetic identities and request claims. It does not create Supabase Auth users or prove a complete browser sign-in flow. Employee-self RLS and real Auth provisioning must also be tested through the application using authorized staging accounts.
+
+## 7. Expected outcome and stop conditions
+
+A successful run must show every check as PASS and must complete cleanup. Any migration, RLS, concurrency, timezone or cleanup failure means staging verification has failed.
+
+Do not:
+- Use production or a project containing real employee/payroll data.
+- Disable RLS to make a test pass.
+- manually create application tables before running migrations.
+- Run this runner against port 6543.
+- Enable live payroll or rely on payroll results.
+- Claim physical Hikvision/eSSL compatibility from a database test.
+
+After the hosted staging suite passes, separately test Supabase Auth with real synthetic staging users, application workflows, and tenant/branch roles. Test the biometric connector with the physical terminal only after its implementation is ready.
