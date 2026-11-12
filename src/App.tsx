@@ -6,10 +6,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
-import { DemoBanner } from './components/DemoBanner';
 import { AttendanceSummaryCards } from './components/AttendanceSummaryCards';
-import { DeviceHealthCard } from './components/DeviceHealthCard';
-import { PayrollStatusCard } from './components/PayrollStatusCard';
 import { NotificationsCard } from './components/NotificationsCard';
 import { QuickLinks } from './components/QuickLinks';
 import { AttendanceDetailView } from './components/AttendanceDetailView';
@@ -24,17 +21,6 @@ import { PocChecklistModal } from './components/PocChecklistModal';
 import { DocsViewerModal } from './components/DocsViewerModal';
 import { AttendanceCorrectionModal } from './components/AttendanceCorrectionModal';
 
-import { 
-  DEMO_ORGANIZATION, 
-  DEMO_BRANCHES, 
-  DEMO_SHIFTS, 
-  DEMO_EMPLOYEES, 
-  DEMO_DEVICES, 
-  DEMO_SUMMARIES, 
-  DEMO_NOTIFICATIONS,
-  DEMO_CORRECTIONS,
-  DEMO_LEAVE_REQUESTS
-} from './data/demoData';
 import { getDataService } from './services/dataService';
 import { authService, AuthUser } from './services/authService';
 import { 
@@ -65,11 +51,11 @@ export default function App() {
   const isLive = dataService.isLiveMode();
 
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
-  const [selectedBranchId, setSelectedBranchId] = useState<string>(isLive ? '' : DEMO_BRANCHES[0].id);
-  const [branches, setBranches] = useState<Branch[]>(isLive ? [] : DEMO_BRANCHES);
-  const [devices, setDevices] = useState<AttendanceDevice[]>(isLive ? [] : DEMO_DEVICES);
-  const [authReady, setAuthReady] = useState<boolean>(!isLive);
-  const [organizationName, setOrganizationName] = useState<string>(isLive ? '' : DEMO_ORGANIZATION.name);
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [devices, setDevices] = useState<AttendanceDevice[]>([]);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [organizationName, setOrganizationName] = useState<string>('');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
@@ -79,12 +65,12 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(authService.getCurrentUser());
 
   // Core application states
-  const [employees, setEmployees] = useState<Employee[]>(isLive ? [] : DEMO_EMPLOYEES);
-  const [summaries, setSummaries] = useState<AttendanceDailySummary[]>(isLive ? [] : DEMO_SUMMARIES);
-  const [corrections, setCorrections] = useState<AttendanceCorrection[]>(isLive ? [] : DEMO_CORRECTIONS);
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(isLive ? [] : DEMO_LEAVE_REQUESTS);
-  const [shifts, setShifts] = useState<Shift[]>(isLive ? [] : DEMO_SHIFTS);
-  const [notifications, setNotifications] = useState<AppNotification[]>(isLive ? [] : DEMO_NOTIFICATIONS);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [summaries, setSummaries] = useState<AttendanceDailySummary[]>([]);
+  const [corrections, setCorrections] = useState<AttendanceCorrection[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Time & date
@@ -98,7 +84,7 @@ export default function App() {
   const [correctionTargetEmpId, setCorrectionTargetEmpId] = useState<string | undefined>(undefined);
 
   const activeBranch = branches.find(b => b.id === selectedBranchId) || branches[0];
-  const activeOrganizationId = isLive ? (currentUser?.organizationId || '') : DEMO_ORGANIZATION.id;
+  const activeOrganizationId = currentUser?.organizationId || '';
   const primaryDevice = devices[0];
 
   // Toast feedback helper
@@ -121,7 +107,7 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    if (isLive && !currentUser) {
+    if (!currentUser) {
       setBranches([]);
       setDevices([]);
       setEmployees([]);
@@ -161,7 +147,7 @@ export default function App() {
           ? branchRows.filter(branch => branch.id === employeeBranchId)
           : branchRows;
         const selectedOrganization = organizationRows.find(org => org.id === organizationId);
-        setOrganizationName(selectedOrganization?.name || (isLive ? 'Organization' : DEMO_ORGANIZATION.name));
+        setOrganizationName(selectedOrganization?.name || '');
         setBranches(visibleBranches);
         setEmployees(visibleEmployeeRows);
         const visibleEmployeeIds = new Set(visibleEmployeeRows.map(employee => employee.id));
@@ -170,7 +156,7 @@ export default function App() {
         setLeaveRequests(leaveRows.filter(request => visibleEmployeeIds.has(request.employee_id)));
         setShifts(shiftRows);
         setDevices(deviceRows.filter(device => !selectedBranchId || device.branch_id === selectedBranchId));
-        if (isLive) setNotifications([]);
+        setNotifications([]);
         if (visibleBranches.length > 0) {
           const preferredBranch = currentUser?.assignedBranchId;
           setSelectedBranchId(previous => {
@@ -185,7 +171,7 @@ export default function App() {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[DataService] Failed to load organization data:', msg);
-        if (isMounted && isLive) {
+        if (isMounted) {
           setBranches([]);
           setDevices([]);
           setEmployees([]);
@@ -238,30 +224,7 @@ export default function App() {
       const created = await dataService.createEmployee(newEmpData);
       setEmployees(prev => [...prev, created]);
 
-      // Synthetic attendance is created only in demo mode. A live employee must
-      // receive attendance from a real device event or an authorized correction.
-      if (!isLive) {
-        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-        const newSummary: AttendanceDailySummary = {
-          id: `sum-${created.id}-${today}`,
-          organization_id: created.organization_id,
-          employee_id: created.id,
-          work_date: today,
-          total_work_minutes: 0,
-          total_break_minutes: 0,
-          overtime_minutes: 0,
-          status: 'absent',
-          is_late: false,
-          late_minutes: 0,
-          is_early_departure: false,
-          early_departure_minutes: 0,
-          is_missing_checkout: false,
-          is_approved: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        setSummaries(prev => [...prev, newSummary]);
-      }
+      // A new employee starts with no attendance. Only real device events or authorized corrections create records.
 
       showToast(`Staff member "${created.display_name}" registered successfully!`);
     } catch (err: unknown) {
@@ -383,7 +346,7 @@ export default function App() {
 
       // If leave covers today, update employee summary to on_leave
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-      if (!isLive && req.start_date <= today && req.end_date >= today) {
+      if (req.start_date <= today && req.end_date >= today) {
         setSummaries(prev => prev.map(s => {
           if (s.employee_id === req.employee_id && s.work_date === today) {
             return {
@@ -492,19 +455,6 @@ export default function App() {
         onToggleSeniorMode={() => setIsSeniorMode(!isSeniorMode)}
       />
 
-      {/* Prominent Demo / Live Mode Banner */}
-      <DemoBanner
-        isLiveMode={isLive}
-        onOpenPocDoc={() => {
-          setActiveDocType('feasibility');
-          setIsDocsModalOpen(true);
-        }}
-        onOpenSetupDoc={() => {
-          setActiveDocType('setup');
-          setIsDocsModalOpen(true);
-        }}
-      />
-
       {/* Toast Notification Bar */}
       {toastMessage && (
         <div className="bg-slate-900 text-white px-4 py-2.5 text-xs sm:text-sm font-semibold flex items-center justify-between shadow-lg sticky top-16 z-40 animate-in fade-in">
@@ -560,7 +510,7 @@ export default function App() {
             )}
             <div className="flex items-center gap-2 font-mono tabular-nums bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs">
               <Clock className="w-4 h-4 text-slate-600" />
-              <span className="font-bold text-slate-900 text-xs sm:text-sm">{currentTime || '09:30:00 AM'}</span>
+              <span className="font-bold text-slate-900 text-xs sm:text-sm">{currentTime || '—'}</span>
               <span className="text-[11px] text-slate-500 font-sans font-semibold">IST (Kerala)</span>
             </div>
 
@@ -668,35 +618,17 @@ export default function App() {
 
             {/* Middle Section: Device Health & Payroll Status */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {primaryDevice ? (
-                <DeviceHealthCard
-                  device={primaryDevice}
-                  onOpenManagement={() => setCurrentTab('devices')}
-                />
-              ) : (
-                <div className="bg-white rounded-xl border border-slate-200 p-5">
-                  <h3 className="font-bold text-slate-900">No attendance device configured</h3>
-                  <p className="text-sm text-slate-600 mt-1">Register a device before expecting biometric attendance to appear.</p>
-                  <button type="button" onClick={() => setCurrentTab('devices')} className="mt-3 text-sm font-semibold underline">Open device management</button>
-                </div>
-              )}
+              <div className="bg-white rounded-xl border border-slate-200 p-5">
+                <h3 className="font-bold text-slate-900">Device status</h3>
+                <p className="mt-1 text-sm text-slate-600">{primaryDevice ? 'Registered device details are available in Device Management. Live connectivity has not been independently verified.' : 'No attendance device has been registered for this branch.'}</p>
+                <button type="button" onClick={() => setCurrentTab('devices')} className="mt-3 text-sm font-semibold underline">Open device management</button>
+              </div>
 
-              {isLive ? (
-                <div className="bg-white rounded-xl border border-amber-200 p-5">
-                  <h3 className="font-bold text-slate-900">Payroll readiness</h3>
-                  <p className="mt-1 text-sm text-slate-600">Live payroll totals are not yet calculated from approved attendance and customer-confirmed salary rules. The preview is disabled in live mode.</p>
-                </div>
-              ) : (
-                <PayrollStatusCard
-                  currentPeriod="October 2026"
-                  currentStatus="draft"
-                  eligibleEmployeesCount={totalEmployees}
-                  totalGrossEstimate={224000}
-                  previousPeriod="September 2026"
-                  previousStatus="locked"
-                  onOpenPayroll={() => setCurrentTab('payroll')}
-                />
-              )}
+              <div className="bg-white rounded-xl border border-slate-200 p-5">
+                <h3 className="font-bold text-slate-900">Payroll readiness</h3>
+                <p className="mt-1 text-sm text-slate-600">Payroll totals remain unavailable until salary data and customer-approved payroll rules are configured.</p>
+                <button type="button" onClick={() => setCurrentTab('payroll')} className="mt-3 text-sm font-semibold underline">Open payroll</button>
+              </div>
             </div>
 
             {/* Bottom Section: Action Items & Quick Links */}
@@ -849,7 +781,7 @@ export default function App() {
             <span className="font-bold text-slate-700">AttendEase SaaS</span> · Universal Attendance &amp; Payroll Platform
           </div>
           <div className="flex items-center gap-4 text-slate-500">
-            <span>{isLive ? 'Authenticated organization workspace' : 'Evaluation demo mode'}</span>
+            <span>{isLive ? 'Authenticated organization workspace' : 'Live organization workspace'}</span>
             <span aria-hidden="true">·</span>
             <button
               type="button"
