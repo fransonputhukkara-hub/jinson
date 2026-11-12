@@ -269,7 +269,7 @@ export async function runStagingVerification(): Promise<void> {
     }
 
     // 2. Migration Execution (forward-only, checksummed, transactional)
-    console.log('\n--- Applying verified migrations 000000 through 000008 ---');
+    console.log('\n--- Applying verified migrations 000000 through 000009 ---');
     const migrationFiles = [
       '20250101000000_initial_schema.sql',
       '20250101000001_tenant_isolation_rls.sql',
@@ -280,6 +280,7 @@ export async function runStagingVerification(): Promise<void> {
       '20250101000006_remediation_and_security_hardening.sql',
       '20250101000007_branch_scope_rls_hardening.sql',
       '20250101000008_remaining_tenant_and_payroll_integrity.sql',
+      '20250101000009_decision_actor_integrity.sql',
     ];
 
     const migrationsDir = path.resolve(process.cwd(), 'supabase/migrations');
