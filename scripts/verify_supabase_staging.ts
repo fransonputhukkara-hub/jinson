@@ -71,6 +71,13 @@ export function sanitizeError(err: any, rawUrl?: string): string {
 const TEST_ORG_ID = 'e0000000-0000-4000-a000-000000000001';
 const TEST_BRANCH_ID = 'e0000000-0000-4000-a000-000000000002';
 const TEST_EMP_ID = 'e0000000-0000-4000-a000-000000000003';
+const TEST_BRANCH_2_ID = 'e0000000-0000-4000-a000-000000000004';
+const TEST_EMP_2_ID = 'e0000000-0000-4000-a000-000000000005';
+const TEST_ORG_B_ID = 'e0000000-0000-4000-a000-000000000006';
+const TEST_BRANCH_B_ID = 'e0000000-0000-4000-a000-000000000007';
+const TEST_EMP_B_ID = 'e0000000-0000-4000-a000-000000000008';
+const TEST_RLS_USER_ID = 'e0000000-0000-4000-a000-000000000009';
+const TEST_OTHER_USER_ID = 'e0000000-0000-4000-a000-00000000000a';
 const TEST_RUN_ORD1_ID = 'e0000000-0000-4000-a000-000000000010';
 const TEST_RUN_ORD2_ID = 'e0000000-0000-4000-a000-000000000020';
 const TEST_RUN_TZ_ID = 'e0000000-0000-4000-a000-000000000030';
@@ -168,8 +175,13 @@ export async function runStagingVerification(): Promise<void> {
     if (existing.rows[0].code !== 'ATTENDEASE_STAGING_TEST') {
       throw new Error('Refusing to clean test UUID: organization marker does not match.');
     }
+    const otherTenant = await client.query('SELECT code FROM organizations WHERE id = $1', [TEST_ORG_B_ID]);
+    if (otherTenant.rowCount && otherTenant.rows[0].code !== 'ATTENDEASE_STAGING_TEST_B') {
+      throw new Error('Refusing to clean second test UUID: organization marker does not match.');
+    }
     await client.query('BEGIN');
     try {
+      await client.query('DELETE FROM organizations WHERE id = $1 AND code = $2', [TEST_ORG_B_ID, 'ATTENDEASE_STAGING_TEST_B']);
       await client.query('DELETE FROM payslips WHERE organization_id = $1', [TEST_ORG_ID]);
       await client.query('DELETE FROM payroll_items WHERE organization_id = $1', [TEST_ORG_ID]);
       await client.query('DELETE FROM payroll_runs WHERE organization_id = $1', [TEST_ORG_ID]);
@@ -339,6 +351,19 @@ export async function runStagingVerification(): Promise<void> {
         VALUES ('${TEST_RUN_ORD1_ID}', '${TEST_ORG_ID}', '2026-10-01', '2026-10-31', 'October 2026', 'draft');
         INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status)
         VALUES ('${TEST_RUN_ORD2_ID}', '${TEST_ORG_ID}', '2026-10-01', '2026-10-31', 'October 2026', 'draft');
+        INSERT INTO branches (id, organization_id, name, code) VALUES ('${TEST_BRANCH_2_ID}', '${TEST_ORG_ID}', 'Second Staging Branch', 'ATTENDEASE_STAGING_TEST_BRANCH_2');
+        INSERT INTO employees (id, organization_id, branch_id, employee_code, first_name, last_name, display_name, email, designation, joining_date)
+        VALUES ('${TEST_EMP_2_ID}', '${TEST_ORG_ID}', '${TEST_BRANCH_2_ID}', 'STG002', 'Branch', 'Two', 'Branch Two', 'branch.two@staging.local', 'Engineer', '2026-01-01');
+        INSERT INTO organizations (id, name, code) VALUES ('${TEST_ORG_B_ID}', 'AttendEase Second Staging Tenant', 'ATTENDEASE_STAGING_TEST_B');
+        INSERT INTO branches (id, organization_id, name, code) VALUES ('${TEST_BRANCH_B_ID}', '${TEST_ORG_B_ID}', 'Other Tenant Branch', 'ATTENDEASE_STAGING_TEST_B_BRANCH');
+        INSERT INTO employees (id, organization_id, branch_id, employee_code, first_name, last_name, display_name, email, designation, joining_date)
+        VALUES ('${TEST_EMP_B_ID}', '${TEST_ORG_B_ID}', '${TEST_BRANCH_B_ID}', 'STGB001', 'Other', 'Tenant', 'Other Tenant', 'other.tenant@staging.local', 'Engineer', '2026-01-01');
+        INSERT INTO user_profiles (id, email, full_name) VALUES
+          ('${TEST_RLS_USER_ID}', 'staging-rls-manager@attendease.invalid', 'Staging RLS Manager'),
+          ('${TEST_OTHER_USER_ID}', 'staging-rls-coworker@attendease.invalid', 'Staging RLS Co-worker');
+        INSERT INTO organization_members (organization_id, user_id, role, assigned_branch_id) VALUES
+          ('${TEST_ORG_ID}', '${TEST_RLS_USER_ID}', 'branch_manager', '${TEST_BRANCH_ID}'),
+          ('${TEST_ORG_ID}', '${TEST_OTHER_USER_ID}', 'employee', '${TEST_BRANCH_2_ID}');
       `);
 
       // Test Concurrency Ordering 1:
@@ -464,7 +489,81 @@ export async function runStagingVerification(): Promise<void> {
       tzClient.release();
     }
 
-    // 5. Transaction Pooling & Session Isolation Check
+    // 5. Hosted PostgreSQL RLS behavior using synthetic authenticated identities.
+    // Exercise the actual policy layer, not a client-side organization filter.
+    console.log('\n--- Verifying Tenant, Branch and Profile RLS ---');
+    const rlsClient = await pool.connect();
+    try {
+      await rlsClient.query('BEGIN');
+      await rlsClient.query('SET LOCAL ROLE authenticated');
+      await rlsClient.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [TEST_RLS_USER_ID]);
+      await rlsClient.query("SELECT set_config('request.jwt.claim.role', 'authenticated', true)");
+
+      const tenantRows = await rlsClient.query(
+        'SELECT id FROM organizations WHERE id = ANY($1::uuid[])',
+        [[TEST_ORG_ID, TEST_ORG_B_ID]],
+      );
+      const employeeRows = await rlsClient.query(
+        'SELECT id FROM employees WHERE organization_id = ANY($1::uuid[])',
+        [[TEST_ORG_ID, TEST_ORG_B_ID]],
+      );
+      const profileRows = await rlsClient.query(
+        'SELECT id FROM user_profiles WHERE id = ANY($1::uuid[])',
+        [[TEST_RLS_USER_ID, TEST_OTHER_USER_ID]],
+      );
+
+      const tenantIsolated = tenantRows.rowCount === 1 && tenantRows.rows[0].id === TEST_ORG_ID;
+      const branchScoped = employeeRows.rowCount === 1 && employeeRows.rows[0].id === TEST_EMP_ID;
+      const profilePrivate = profileRows.rowCount === 1 && profileRows.rows[0].id === TEST_RLS_USER_ID;
+
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Cross-tenant organization isolation',
+        passed: tenantIsolated,
+        message: tenantIsolated ? 'Authenticated branch manager sees only the assigned organization.' : `Unexpected visible organization count: ${tenantRows.rowCount}`,
+      });
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Branch-manager employee isolation',
+        passed: branchScoped,
+        message: branchScoped ? 'Branch manager sees employees only in the assigned branch.' : `Unexpected visible employee count: ${employeeRows.rowCount}`,
+      });
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'User profile privacy',
+        passed: profilePrivate,
+        message: profilePrivate ? 'User can read their own profile but not a co-member profile.' : `Unexpected visible profile count: ${profileRows.rowCount}`,
+      });
+
+      await rlsClient.query('SAVEPOINT raw_event_write');
+      let rawEventWriteDenied = false;
+      try {
+        await rlsClient.query(
+          `INSERT INTO attendance_events (organization_id, employee_id, device_user_id, event_time, event_type)
+           VALUES ($1, $2, 'STAGING-UNTRUSTED', now(), 'check_in')`,
+          [TEST_ORG_ID, TEST_EMP_ID],
+        );
+      } catch (error: any) {
+        rawEventWriteDenied = error.code === '42501';
+        await rlsClient.query('ROLLBACK TO SAVEPOINT raw_event_write');
+      }
+      await rlsClient.query('RELEASE SAVEPOINT raw_event_write');
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Browser-authenticated raw attendance event insertion denied',
+        passed: rawEventWriteDenied,
+        message: rawEventWriteDenied ? 'Authenticated client cannot manufacture raw device punches.' : 'Raw attendance event write was not denied as expected.',
+      });
+
+      await rlsClient.query('ROLLBACK');
+    } catch (error) {
+      await rlsClient.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      rlsClient.release();
+    }
+
+    // 7. Transaction Pooling & Session Isolation Check
     console.log('\n--- Verifying Transaction-Pooling Compatibility ---');
     const poolClient = await pool.connect();
     try {
