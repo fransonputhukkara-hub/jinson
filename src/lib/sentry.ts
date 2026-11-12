@@ -7,6 +7,13 @@
 const SENSITIVE_KEY_PATTERNS = [
   /salary/i,
   /wage/i,
+  /employee/i,
+  /full.?name/i,
+  /email/i,
+  /phone/i,
+  /address/i,
+  /date.?of.?birth/i,
+  /dob/i,
   /bank/i,
   /account_no/i,
   /ifsc/i,
@@ -110,9 +117,9 @@ class SafeLogger {
     if (this.isEnabled) {
       const win = window as unknown as { Sentry?: { captureMessage: (m: string, ctx: unknown) => void } };
       if (win.Sentry && typeof win.Sentry.captureMessage === 'function') {
-        win.Sentry.captureMessage('Application diagnostic event (message filtered).', {
+        win.Sentry.captureMessage('Application diagnostic event (message suppressed for privacy).', {
           tags: sanitizedTags,
-          extra: { sanitizedMessage: safeMessage, ...((sanitizedExtra || {}) as Record<string, unknown>) },
+          extra: sanitizedExtra,
           level: options?.level || 'info',
         });
         return;
