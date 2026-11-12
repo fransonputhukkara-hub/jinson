@@ -13,6 +13,7 @@ import { LeaveRequest, Employee } from '../types/database.types';
 
 interface LeaveManagementViewProps {
   organizationId: string;
+  canDecideRequests?: boolean;
   leaveRequests: LeaveRequest[];
   employees: Employee[];
   onApplyLeave: (req: Omit<LeaveRequest, 'id' | 'created_at'>) => void;
@@ -22,6 +23,7 @@ interface LeaveManagementViewProps {
 
 export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
   organizationId,
+  canDecideRequests = true,
   leaveRequests,
   employees,
   onApplyLeave,
@@ -201,7 +203,7 @@ export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
-                        {isPending ? (
+                        {isPending && canDecideRequests ? (
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               type="button"
@@ -219,7 +221,7 @@ export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
                             </button>
                           </div>
                         ) : (
-                          <span className="text-xs text-slate-400">—</span>
+                          <span className="text-xs text-slate-400">{isPending ? 'Awaiting review' : '—'}</span>
                         )}
                       </td>
                     </tr>
