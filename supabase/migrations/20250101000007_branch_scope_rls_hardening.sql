@@ -30,6 +30,10 @@ USING (
         auth_user_role_in_org(organization_id) IN ('branch_manager', 'employee')
         AND id = auth_user_assigned_branch(organization_id)
       )
+      OR (
+        auth_user_role_in_org(organization_id) = 'employee'
+        AND id = auth_current_employee_branch_id(organization_id)
+      )
     )
   )
 );
@@ -58,10 +62,8 @@ USING (
   auth_is_platform_admin()
   OR (
     organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
-    AND (
-      auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
-      OR branch_id IS NULL
-      OR branch_id = auth_user_assigned_branch(organization_id)
+    AND auth_user_role_in_org(organization_id) IN (
+      'company_owner', 'company_admin', 'branch_manager', 'employee'
     )
   )
 );
@@ -78,6 +80,30 @@ USING (
       auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
       OR branch_id IS NULL
       OR branch_id = auth_user_assigned_branch(organization_id)
+    )
+  )
+);
+
+-- Replace the peer-wide employee policy with role-specific access. Managers see
+-- their assigned branch; employees see only the row linked to their auth email.
+DROP POLICY IF EXISTS "Role-aware employee read access" ON employees;
+CREATE POLICY "Role scoped employee read"
+ON employees FOR SELECT
+TO authenticated
+USING (
+  auth_is_platform_admin()
+  OR (
+    organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
+    AND (
+      auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
+      OR (
+        auth_user_role_in_org(organization_id) = 'branch_manager'
+        AND branch_id = auth_user_assigned_branch(organization_id)
+      )
+      OR (
+        auth_user_role_in_org(organization_id) = 'employee'
+        AND id = auth_current_employee_id(organization_id)
+      )
     )
   )
 );
