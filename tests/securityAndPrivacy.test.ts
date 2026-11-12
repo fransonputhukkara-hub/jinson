@@ -26,7 +26,7 @@ describe('Security & Privacy - Sentry PII Sanitizer', () => {
 
     // Non-sensitive data remains untouched
     expect(sanitized.user_id).toBe('emp-001');
-    expect(sanitized.employee_name).toBe('Jinson Varghese');
+    expect(sanitized.employee_name).toBe('[REDACTED_PII]');
 
     // Sensitive data is strictly redacted
     expect(sanitized.basic_salary).toBe('[REDACTED_PII]');
