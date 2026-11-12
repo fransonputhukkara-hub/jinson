@@ -586,7 +586,7 @@ export default function App() {
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-0.5">
-                  Owner Overview
+                  {currentUser?.role === 'company_owner' ? 'Owner Overview' : 'Organization Overview'}
                 </span>
                 <h1 className={`font-bold tracking-tight text-slate-900 ${
                   isSeniorMode ? 'text-2xl sm:text-3xl' : 'text-xl sm:text-2xl'
@@ -748,25 +748,34 @@ export default function App() {
         )}
 
         {currentTab === 'leave' && (
-          <LeaveManagementView
-            organizationId={activeOrganizationId}
-            leaveRequests={leaveRequests}
-            employees={employees}
-            onApplyLeave={handleApplyLeave}
-            onApproveLeave={handleApproveLeave}
-            onRejectLeave={handleRejectLeave}
-          />
+          <>
+            {isLive && (
+              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+                Live leave applications are saved. Approval decisions are temporarily disabled until approved leave can be applied to attendance summaries atomically and audited.
+              </div>
+            )}
+            <LeaveManagementView
+              organizationId={activeOrganizationId}
+              canDecideRequests={!isLive}
+              leaveRequests={leaveRequests}
+              employees={employees}
+              onApplyLeave={handleApplyLeave}
+              onApproveLeave={handleApproveLeave}
+              onRejectLeave={handleRejectLeave}
+            />
+          </>
         )}
 
         {currentTab === 'employees' && (
-          isLive && currentUser?.role !== 'company_owner' && currentUser?.role !== 'company_admin' ? (
+          isLive && !['company_owner', 'company_admin', 'branch_manager', 'employee'].includes(currentUser?.role || '') ? (
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
-              <h2 className="font-bold">Employee administration is restricted</h2>
-              <p className="mt-1 text-sm">Only organization owners and administrators can add or change employee records. Your account can view only the employee records permitted by its branch and role.</p>
+              <h2 className="font-bold">Employee records are restricted</h2>
+              <p className="mt-1 text-sm">Your organization role does not permit employee-directory access.</p>
             </div>
           ) : (
             <EmployeesView
               organizationId={activeOrganizationId}
+              canManage={!isLive || currentUser?.role === 'company_owner' || currentUser?.role === 'company_admin'}
               employees={employees}
               shifts={shifts}
               branches={branches}
@@ -786,11 +795,31 @@ export default function App() {
         )}
 
         {currentTab === 'devices' && (
-          isLive && currentUser?.role !== 'company_owner' && currentUser?.role !== 'company_admin' && currentUser?.role !== 'installer_partner' ? (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
-              <h2 className="font-bold">Device administration is restricted</h2>
-              <p className="mt-1 text-sm">Your organization role does not permit device configuration.</p>
-            </div>
+          isLive ? (
+            <section className="space-y-4">
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+                <h2 className="font-bold">Hardware connector not yet verified</h2>
+                <p className="mt-1 text-sm">This screen shows devices registered in the database only. Live connectivity tests, attendance retrieval and synchronization remain disabled until the branch Edge Connector is implemented and physically tested with the terminal.</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <h3 className="font-bold text-slate-900">Registered devices</h3>
+                {devices.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-500">No devices are registered for the selected branch.</p>
+                ) : (
+                  <ul className="mt-3 divide-y divide-slate-100">
+                    {devices.map(device => (
+                      <li key={device.id} className="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="font-semibold text-slate-900">{device.device_name}</div>
+                          <div className="text-xs text-slate-500">{device.manufacturer} · {device.model} · Serial: {device.serial_number}</div>
+                        </div>
+                        <span className="text-xs font-semibold text-slate-600">Database status: {device.status.replaceAll('_', ' ')}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
           ) : (
             <DeviceManagementView devices={devices} onOpenPocModal={() => setIsPocModalOpen(true)} />
           )

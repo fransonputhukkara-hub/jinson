@@ -50,6 +50,9 @@ export async function runPostgresVerification(): Promise<{
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
         CREATE ROLE anon NOLOGIN;
       END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE ROLE service_role NOLOGIN BYPASSRLS;
+      END IF;
     END $$;
 
     GRANT USAGE ON SCHEMA public TO authenticated, anon;
@@ -66,7 +69,10 @@ export async function runPostgresVerification(): Promise<{
     '20250101000003_locked_payroll_child_integrity.sql',
     '20250101000004_fix_employee_rls_recursion.sql',
     '20250101000005_concurrency_and_schema_hardening.sql',
-    '20250101000006_remediation_and_security_hardening.sql'
+    '20250101000006_remediation_and_security_hardening.sql',
+    '20250101000007_branch_scope_rls_hardening.sql',
+    '20250101000008_remaining_tenant_and_payroll_integrity.sql',
+    '20250101000009_decision_actor_integrity.sql'
   ];
 
   const migrationsDir = path.resolve(process.cwd(), 'supabase/migrations');
@@ -160,7 +166,8 @@ export async function runPostgresVerification(): Promise<{
     INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status) VALUES
     ('${runLockedId}', '${orgAId}', '2026-09-01', '2026-09-30', 'September 2026', 'draft'),
     ('${runDraftId}', '${orgAId}', '2026-10-01', '2026-10-31', 'October 2026', 'draft'),
-    ('${runReviewId}', '${orgAId}', '2026-11-01', '2026-11-30', 'November 2026', 'review');
+    ('${runReviewId}', '${orgAId}', '2026-11-01', '2026-11-30', 'November 2026', 'draft');
+    UPDATE payroll_runs SET status = 'review' WHERE id = '${runReviewId}';
 
     INSERT INTO payroll_items (id, payroll_run_id, organization_id, employee_id, gross_pay, net_pay) VALUES
     ('10101010-1010-1010-1010-101010101010', '${runLockedId}', '${orgAId}', '${emp1Id}', 30000.00, 29000.00),
@@ -589,6 +596,29 @@ export async function runPostgresVerification(): Promise<{
       message: !seesBranch2 ? 'Branch Manager sees only assigned Thrissur branch staff (Ernakulam hidden)' : 'Branch Manager saw unassigned branch!',
     });
 
+    // 8c: Employee accounts can read only their own employee profile and branch.
+    await db.exec(`SELECT set_config('request.jwt.claim.sub', '${userEmpId}', false);`);
+    const employeeVisibleRows = await db.query<{ id: string; branch_id: string }>(`
+      SELECT id, branch_id FROM employees;
+    `);
+    const employeeSelfOnly = employeeVisibleRows.rows.length === 1 && employeeVisibleRows.rows[0].id === emp1Id;
+    results.push({
+      step: '8. Real RLS & Role Context Validation',
+      name: 'Employee can read only their own employee record',
+      passed: employeeSelfOnly,
+      message: employeeSelfOnly ? 'Employee account sees only its linked employee row.' : `Employee account saw ${employeeVisibleRows.rows.length} employee rows.`,
+    });
+
+    const employeeBranchRows = await db.query<{ id: string }>(`
+      SELECT id FROM branches;
+    `);
+    const employeeBranchOnly = employeeBranchRows.rows.length === 1 && employeeBranchRows.rows[0].id === branch1Id;
+    results.push({
+      step: '8. Real RLS & Role Context Validation',
+      name: 'Employee can read only the assigned branch',
+      passed: employeeBranchOnly,
+      message: employeeBranchOnly ? 'Employee account sees only its linked branch.' : `Employee account saw ${employeeBranchRows.rows.length} branches.`,
+    });
     // 8c: Verify Audit Logs Immutability
     await db.exec(`SELECT set_config('request.jwt.claim.sub', '${userOwnerId}', false);`);
     let auditDeleteFailed = false;
@@ -700,6 +730,34 @@ export async function runPostgresVerification(): Promise<{
   }
 
   // =========================================================================
+  // Step 10b: Payroll runs cannot be inserted directly in a non-draft state.
+  // =========================================================================
+  try {
+    let lockedInsertRejected = false;
+    try {
+      await db.exec(`
+        INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status, locked_at)
+        VALUES ('d0000000-0000-0000-0000-000000000099', '${orgAId}', '2027-03-01', '2027-03-31', 'Direct Locked Insert', 'locked', now());
+      `);
+    } catch (error: any) {
+      lockedInsertRejected = error.code === '23514' || error.message.includes('must be created in draft status');
+    }
+    results.push({
+      step: '10. Payroll Creation State',
+      name: 'Direct insertion of a locked payroll run is rejected',
+      passed: lockedInsertRejected,
+      message: lockedInsertRejected ? 'Database requires payroll runs to start in draft status.' : 'A payroll run was inserted directly as locked.',
+    });
+  } catch (error: any) {
+    results.push({
+      step: '10. Payroll Creation State',
+      name: 'Direct locked insertion guard',
+      passed: false,
+      message: error.message,
+    });
+  }
+
+  // =========================================================================
   // Step 11: Draft vs Locked Payroll Deletion Integrity (Milestone 4.1)
   // =========================================================================
   try {
@@ -729,12 +787,21 @@ export async function runPostgresVerification(): Promise<{
       message: draftDeleted ? 'Draft payroll run successfully deleted without false trigger abort' : 'Draft payroll run deletion failed or was canceled',
     });
 
-    // 11b: Locked payroll run deletion must raise an explicit exception
+    // 11b: A payroll run is created as draft, then locked by the database lifecycle.
     await db.exec(`
-      INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status, locked_at)
-      VALUES ('${testLockedRunId}', '${testOrgId}', '2027-02-01', '2027-02-28', 'February 2027 Locked', 'locked', now())
+      INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status)
+      VALUES ('${testLockedRunId}', '${testOrgId}', '2027-02-01', '2027-02-28', 'February 2027 Locked', 'draft')
       ON CONFLICT DO NOTHING;
+      UPDATE payroll_runs SET status = 'locked', locked_at = '2000-01-01T00:00:00Z'
+      WHERE id = '${testLockedRunId}' AND status = 'draft';
     `);
+
+    const testLockedTimestamp = await db.query<{ locked_at: string }>(
+      `SELECT locked_at FROM payroll_runs WHERE id = '${testLockedRunId}'`,
+    );
+    const generatedLockTimestamp =
+      new Date(testLockedTimestamp.rows[0].locked_at).getUTCFullYear() > 2020 &&
+      Math.abs(new Date(testLockedTimestamp.rows[0].locked_at).getTime() - new Date('2000-01-01T00:00:00Z').getTime()) > 86400000;
 
     let lockedDeleteBlocked = false;
     try {
@@ -749,12 +816,21 @@ export async function runPostgresVerification(): Promise<{
       passed: lockedDeleteBlocked,
       message: lockedDeleteBlocked ? 'Attempt to delete locked payroll run raised expected immutability exception' : 'Locked payroll run was deleted!',
     });
+    results.push({
+      step: '11. Payroll Delete Integrity',
+      name: 'Database overwrites caller-supplied locked_at value',
+      passed: generatedLockTimestamp,
+      message: generatedLockTimestamp ? 'The caller-supplied historical timestamp was replaced by the database lock timestamp.' : 'The caller-controlled locked_at value was not replaced.',
+    });
 
     // Teardown locked run safely for clean state
     await db.exec(`
+      ALTER TABLE payroll_items DISABLE TRIGGER trg_payroll_item_lock_integrity;
       ALTER TABLE payroll_runs DISABLE TRIGGER trg_prevent_locked_payroll_modification;
+      DELETE FROM payroll_items WHERE payroll_run_id = '${testLockedRunId}';
       DELETE FROM payroll_runs WHERE id = '${testLockedRunId}';
       ALTER TABLE payroll_runs ENABLE TRIGGER trg_prevent_locked_payroll_modification;
+      ALTER TABLE payroll_items ENABLE TRIGGER trg_payroll_item_lock_integrity;
     `);
   } catch (err: any) {
     results.push({
@@ -874,6 +950,91 @@ export async function runPostgresVerification(): Promise<{
       name: 'Leave requests RLS check',
       passed: false,
       message: err.message,
+    });
+  }
+
+  // =========================================================================
+  // Step 15: Decision actor integrity for leave and attendance corrections
+  // =========================================================================
+  try {
+    const leaveId = 'e9000000-0000-4000-a000-000000000001';
+    const correctionId = 'e9000000-0000-4000-a000-000000000002';
+
+    await db.exec(`
+      INSERT INTO leave_requests (
+        id, organization_id, employee_id, leave_type, start_date, end_date,
+        days_count, reason, status
+      ) VALUES (
+        '${leaveId}', '${orgAId}', '${emp1Id}', 'casual',
+        '2026-12-10', '2026-12-10', 1.0, 'Decision actor test', 'pending'
+      );
+
+      INSERT INTO attendance_corrections (
+        id, organization_id, employee_id, target_date, requested_by,
+        status, correction_type, adjusted_summary, reason
+      ) VALUES (
+        '${correctionId}', '${orgAId}', '${emp1Id}', '2026-12-09',
+        '${userManagerId}', 'pending', 'missing_out', '{}'::jsonb,
+        'Decision actor test'
+      );
+    `);
+
+    await db.exec(`SELECT set_config('request.jwt.claim.sub', '${userManagerId}', false);`);
+
+    await db.exec(`
+      UPDATE leave_requests
+         SET status = 'approved', approved_by = '${userOwnerId}'
+       WHERE id = '${leaveId}';
+      UPDATE attendance_corrections
+         SET status = 'approved', approved_by = '${userOwnerId}'
+       WHERE id = '${correctionId}';
+    `);
+
+    const leaveActor = await db.query<{ approved_by: string }>(
+      `SELECT approved_by FROM leave_requests WHERE id = '${leaveId}'`,
+    );
+    const correctionActor = await db.query<{ approved_by: string }>(
+      `SELECT approved_by FROM attendance_corrections WHERE id = '${correctionId}'`,
+    );
+
+    const leaveActorCorrect = leaveActor.rows[0]?.approved_by === userManagerId;
+    const correctionActorCorrect = correctionActor.rows[0]?.approved_by === userManagerId;
+
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Leave decision actor is sourced from authenticated identity',
+      passed: leaveActorCorrect,
+      message: leaveActorCorrect ? 'Caller-supplied owner ID was replaced with the authenticated branch manager ID.' : 'Leave decision actor did not match auth.uid().',
+    });
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Attendance correction decision actor is sourced from authenticated identity',
+      passed: correctionActorCorrect,
+      message: correctionActorCorrect ? 'Caller-supplied owner ID was replaced with the authenticated branch manager ID.' : 'Correction decision actor did not match auth.uid().',
+    });
+
+    let decidedLeaveImmutable = false;
+    try {
+      await db.exec(`UPDATE leave_requests SET approved_by = '${userOwnerId}' WHERE id = '${leaveId}';`);
+    } catch (error: any) {
+      decidedLeaveImmutable = error.code === '55000' || error.message.includes('decided request is immutable');
+    }
+
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Decided leave requests cannot be edited again',
+      passed: decidedLeaveImmutable,
+      message: decidedLeaveImmutable ? 'Subsequent edits to an approved request were rejected.' : 'An approved leave request could be modified again.',
+    });
+
+    await db.exec(`RESET request.jwt.claim.sub;`);
+  } catch (error: any) {
+    await db.exec(`RESET request.jwt.claim.sub;`).catch(() => undefined);
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Decision actor trigger validation',
+      passed: false,
+      message: error.message,
     });
   }
 

@@ -7,6 +7,13 @@
 const SENSITIVE_KEY_PATTERNS = [
   /salary/i,
   /wage/i,
+  /employee/i,
+  /full.?name/i,
+  /email/i,
+  /phone/i,
+  /address/i,
+  /date.?of.?birth/i,
+  /dob/i,
   /bank/i,
   /account_no/i,
   /ifsc/i,
@@ -45,6 +52,16 @@ export function sanitizeObject(obj: unknown, depth = 0): unknown {
   return sanitized;
 }
 
+function sanitizeDiagnosticText(value: string): string {
+  return value
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED_EMAIL]')
+    .replace(/\b(?:\+91[\s-]?)?[6-9]\d{9}\b/g, '[REDACTED_PHONE]')
+    .replace(/\b[A-Z]{5}\d{4}[A-Z]\b/gi, '[REDACTED_TAX_ID]')
+    .replace(/\b\d{12}\b/g, '[REDACTED_ID]')
+    .replace(/(password|passwd|token|secret|authorization|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .slice(0, 500);
+}
+
 export interface ErrorReportOptions {
   tags?: Record<string, string>;
   extra?: Record<string, unknown>;
@@ -65,12 +82,16 @@ class SafeLogger {
   public captureException(error: Error | unknown, options?: ErrorReportOptions): void {
     const sanitizedExtra = options?.extra ? sanitizeObject(options.extra) : undefined;
     const sanitizedTags = options?.tags ? (sanitizeObject(options.tags) as Record<string, string>) : undefined;
+    const originalName = error instanceof Error ? error.name : 'UnknownError';
+    const safeName = /^[A-Za-z][A-Za-z0-9_]{0,60}$/.test(originalName) ? originalName : 'ApplicationError';
 
     if (this.isEnabled) {
-      // If external Sentry SDK is linked via CDN or bundle, forward sanitized payload
       const win = window as unknown as { Sentry?: { captureException: (e: unknown, ctx: unknown) => void } };
       if (win.Sentry && typeof win.Sentry.captureException === 'function') {
-        win.Sentry.captureException(error, {
+        // Never forward the caller's original Error, message or stack to a third party.
+        const safeError = new Error('Application exception captured; original details were suppressed for privacy.');
+        safeError.name = safeName;
+        win.Sentry.captureException(safeError, {
           tags: sanitizedTags,
           extra: sanitizedExtra,
           level: options?.level || 'error',
@@ -79,30 +100,32 @@ class SafeLogger {
       }
     }
 
-    // Local development console warning with sanitized payload
+    // Local output also omits the original message and stack.
     console.error('[ErrorMonitor]', {
-      name: error instanceof Error ? error.name : 'UnknownError',
-      message: error instanceof Error ? error.message : String(error),
+      name: safeName,
+      message: 'Application exception captured; original details were suppressed for privacy.',
       environment: this.environment,
       tags: sanitizedTags,
       extra: sanitizedExtra,
     });
   }
-
   public captureMessage(message: string, options?: ErrorReportOptions): void {
     const sanitizedExtra = options?.extra ? sanitizeObject(options.extra) : undefined;
+    const sanitizedTags = options?.tags ? (sanitizeObject(options.tags) as Record<string, string>) : undefined;
+    const safeMessage = sanitizeDiagnosticText(message);
+
     if (this.isEnabled) {
       const win = window as unknown as { Sentry?: { captureMessage: (m: string, ctx: unknown) => void } };
       if (win.Sentry && typeof win.Sentry.captureMessage === 'function') {
-        win.Sentry.captureMessage(message, {
-          tags: options?.tags,
+        win.Sentry.captureMessage('Application diagnostic event (message suppressed for privacy).', {
+          tags: sanitizedTags,
           extra: sanitizedExtra,
           level: options?.level || 'info',
         });
         return;
       }
     }
-    console.info(`[ErrorMonitor:${options?.level || 'info'}]`, message, sanitizedExtra);
+    console.info(`[ErrorMonitor:${options?.level || 'info'}]`, safeMessage, sanitizedExtra);
   }
 }
 

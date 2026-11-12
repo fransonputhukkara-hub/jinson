@@ -19,10 +19,10 @@ export const DemoBanner: React.FC<DemoBannerProps> = ({
           <div className="flex items-start sm:items-center gap-2.5">
             <Database className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 sm:mt-0" />
             <div>
-              <span className="font-bold text-emerald-900">SUPABASE LIVE PERSISTENCE CONNECTED</span>
+              <span className="font-bold text-emerald-900">LIVE MODE ENABLED</span>
               <span className="mx-2 hidden sm:inline">·</span>
               <span className="text-emerald-800">
-                Connected to Supabase PostgreSQL database. Row-Level Security and multi-tenant policies active.
+                Sign-in and database access require valid Supabase authentication, applied migrations and working Row-Level Security policies.
               </span>
             </div>
           </div>

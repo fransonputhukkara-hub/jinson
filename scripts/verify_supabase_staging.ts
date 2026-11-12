@@ -4,9 +4,9 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import dotenv from 'dotenv';
 
-// Load environment variables from .env or .env.local if present
-dotenv.config();
+// Preserve shell variables, prefer .env.local over .env, and never commit these files.
 dotenv.config({ path: '.env.local' });
+dotenv.config({ path: '.env' });
 
 interface CheckResult {
   suite: string;
@@ -111,7 +111,6 @@ export async function runStagingVerification(): Promise<void> {
   console.log(`Target Connection: ${safeUrlDisplay}`);
 
   // Safety Check 2: Production Guard (URL substrings & project ref keywords)
-  const urlLower = stagingUrl.toLowerCase();
   const dangerousKeywords = ['prod', 'production', 'live', 'primary', 'customer'];
   for (const kw of dangerousKeywords) {
     // Check if host or path contains dangerous keyword (ignoring safe matches in passwords)
@@ -177,10 +176,24 @@ export async function runStagingVerification(): Promise<void> {
     if (secondaryTenant.rowCount && secondaryTenant.rows[0].code !== 'ATTENDEASE_STAGING_TEST_B') {
       throw new Error('Refusing to clean secondary test UUID: organization marker does not match.');
     }
-    if (!primaryTenant.rowCount && !secondaryTenant.rowCount) return;
+    if (!primaryTenant.rowCount && !secondaryTenant.rowCount) {
+      await client.query(
+        'DELETE FROM user_profiles WHERE id = ANY($1::uuid[]) AND email = ANY($2::text[])',
+        [
+          [TEST_RLS_USER_ID, TEST_OTHER_USER_ID],
+          ['staging-rls-manager@attendease.invalid', 'staging-rls-coworker@attendease.invalid'],
+        ],
+      );
+      return;
+    }
 
     await client.query('BEGIN');
     try {
+      // Locked payroll test runs are intentionally immutable. Temporarily disable
+      // only the two named application immutability triggers inside this isolated
+      // cleanup transaction; rollback re-enables them automatically on any failure.
+      await client.query('ALTER TABLE payroll_items DISABLE TRIGGER trg_payroll_item_lock_integrity');
+      await client.query('ALTER TABLE payroll_runs DISABLE TRIGGER trg_prevent_locked_payroll_modification');
       for (const organizationId of [TEST_ORG_ID, TEST_ORG_B_ID]) {
         await client.query('DELETE FROM payslips WHERE organization_id = $1', [organizationId]);
         await client.query('DELETE FROM payroll_items WHERE organization_id = $1', [organizationId]);
@@ -213,6 +226,8 @@ export async function runStagingVerification(): Promise<void> {
           ['staging-rls-manager@attendease.invalid', 'staging-rls-coworker@attendease.invalid'],
         ],
       );
+      await client.query('ALTER TABLE payroll_runs ENABLE TRIGGER trg_prevent_locked_payroll_modification');
+      await client.query('ALTER TABLE payroll_items ENABLE TRIGGER trg_payroll_item_lock_integrity');
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
@@ -254,7 +269,7 @@ export async function runStagingVerification(): Promise<void> {
     }
 
     // 2. Migration Execution (forward-only, checksummed, transactional)
-    console.log('\n--- Applying verified migrations 000000 through 000006 ---');
+    console.log('\n--- Applying verified migrations 000000 through 000009 ---');
     const migrationFiles = [
       '20250101000000_initial_schema.sql',
       '20250101000001_tenant_isolation_rls.sql',
@@ -264,6 +279,9 @@ export async function runStagingVerification(): Promise<void> {
       '20250101000005_concurrency_and_schema_hardening.sql',
       '20250101000006_remediation_and_security_hardening.sql',
       '20250101000007_branch_scope_rls_hardening.sql',
+      '20250101000008_remaining_tenant_and_payroll_integrity.sql',
+      '20250101000009_decision_actor_integrity.sql',
+      '20250101000009_decision_actor_integrity.sql',
     ];
 
     const migrationsDir = path.resolve(process.cwd(), 'supabase/migrations');
@@ -273,7 +291,7 @@ export async function runStagingVerification(): Promise<void> {
     const existingState = await pool.query(`
       SELECT
         to_regclass('public.organizations') IS NOT NULL AS has_organizations,
-        to_regclass('public.attendease_schema_migrations') IS NOT NULL AS has_history
+        to_regclass('attendease_private.attendease_schema_migrations') IS NOT NULL AS has_history
     `);
     if (existingState.rows[0].has_organizations && !existingState.rows[0].has_history) {
       throw new Error('Staging database already contains an organizations table but has no AttendEase migration history. Refusing to guess its schema state.');
@@ -290,11 +308,16 @@ export async function runStagingVerification(): Promise<void> {
       }
     }
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS public.attendease_schema_migrations (
+      CREATE SCHEMA IF NOT EXISTS attendease_private AUTHORIZATION postgres;
+      REVOKE ALL ON SCHEMA attendease_private FROM PUBLIC, anon, authenticated;
+      GRANT USAGE, CREATE ON SCHEMA attendease_private TO postgres;
+      CREATE TABLE IF NOT EXISTS attendease_private.attendease_schema_migrations (
         migration_name text PRIMARY KEY,
         checksum_sha256 text NOT NULL,
         applied_at timestamptz NOT NULL DEFAULT now()
-      )
+      );
+      REVOKE ALL ON TABLE attendease_private.attendease_schema_migrations FROM PUBLIC, anon, authenticated, service_role;
+      GRANT ALL ON TABLE attendease_private.attendease_schema_migrations TO postgres;
     `);
 
     for (const file of migrationFiles) {
@@ -302,7 +325,7 @@ export async function runStagingVerification(): Promise<void> {
       const sql = fs.readFileSync(sqlPath, 'utf8');
       const checksum = createHash('sha256').update(sql).digest('hex');
       const prior = await pool.query(
-        'SELECT checksum_sha256 FROM public.attendease_schema_migrations WHERE migration_name = $1',
+        'SELECT checksum_sha256 FROM attendease_private.attendease_schema_migrations WHERE migration_name = $1',
         [file],
       );
       if (prior.rowCount) {
@@ -320,7 +343,7 @@ export async function runStagingVerification(): Promise<void> {
         await migClient.query('BEGIN');
         await migClient.query(sql);
         await migClient.query(
-          'INSERT INTO public.attendease_schema_migrations (migration_name, checksum_sha256) VALUES ($1, $2)',
+          'INSERT INTO attendease_private.attendease_schema_migrations (migration_name, checksum_sha256) VALUES ($1, $2)',
           [file, checksum],
         );
         await migClient.query('COMMIT');
@@ -520,6 +543,10 @@ export async function runStagingVerification(): Promise<void> {
         'SELECT id FROM organizations WHERE id = ANY($1::uuid[])',
         [[TEST_ORG_ID, TEST_ORG_B_ID]],
       );
+      const branchRows = await rlsClient.query(
+        'SELECT id FROM branches WHERE id = ANY($1::uuid[])',
+        [[TEST_BRANCH_ID, TEST_BRANCH_2_ID, TEST_BRANCH_B_ID]],
+      );
       const employeeRows = await rlsClient.query(
         'SELECT id FROM employees WHERE organization_id = ANY($1::uuid[])',
         [[TEST_ORG_ID, TEST_ORG_B_ID]],
@@ -535,6 +562,7 @@ export async function runStagingVerification(): Promise<void> {
 
       const tenantIsolated = tenantRows.rowCount === 1 && tenantRows.rows[0].id === TEST_ORG_ID;
       const branchScoped = employeeRows.rowCount === 1 && employeeRows.rows[0].id === TEST_EMP_ID;
+      const branchDirectoryScoped = branchRows.rowCount === 1 && branchRows.rows[0].id === TEST_BRANCH_ID;
       const summaryScoped = summaryRows.rowCount === 1 && summaryRows.rows[0].employee_id === TEST_EMP_ID;
       const profilePrivate = profileRows.rowCount === 1 && profileRows.rows[0].id === TEST_RLS_USER_ID;
 
@@ -543,6 +571,12 @@ export async function runStagingVerification(): Promise<void> {
         test: 'Cross-tenant organization isolation',
         passed: tenantIsolated,
         message: tenantIsolated ? 'Authenticated branch manager sees only the assigned organization.' : `Unexpected visible organization count: ${tenantRows.rowCount}`,
+      });
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Branch-manager branch directory isolation',
+        passed: branchDirectoryScoped,
+        message: branchDirectoryScoped ? 'Branch manager sees only the assigned branch.' : `Unexpected visible branch count: ${branchRows.rowCount}`,
       });
       results.push({
         suite: '6. Hosted RLS Isolation',
@@ -561,6 +595,26 @@ export async function runStagingVerification(): Promise<void> {
         test: 'User profile privacy',
         passed: profilePrivate,
         message: profilePrivate ? 'User can read their own profile but not a co-member profile.' : `Unexpected visible profile count: ${profileRows.rowCount}`,
+      });
+
+      await rlsClient.query('SAVEPOINT cross_tenant_write');
+      let crossTenantEmployeeWriteDenied = false;
+      try {
+        await rlsClient.query(
+          `INSERT INTO employees (organization_id, branch_id, employee_code, first_name, last_name, display_name, designation, joining_date)
+           VALUES ($1, $2, 'STG-BLOCKED', 'Blocked', 'Write', 'Blocked Write', 'Test', '2026-01-01')`,
+          [TEST_ORG_B_ID, TEST_BRANCH_B_ID],
+        );
+      } catch (error: any) {
+        crossTenantEmployeeWriteDenied = error.code === '42501';
+        await rlsClient.query('ROLLBACK TO SAVEPOINT cross_tenant_write');
+      }
+      await rlsClient.query('RELEASE SAVEPOINT cross_tenant_write');
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Cross-tenant employee write denied',
+        passed: crossTenantEmployeeWriteDenied,
+        message: crossTenantEmployeeWriteDenied ? 'Branch manager cannot create an employee in another tenant.' : 'Cross-tenant employee insert was not denied as expected.',
       });
 
       await rlsClient.query('SAVEPOINT raw_event_write');
@@ -591,8 +645,8 @@ export async function runStagingVerification(): Promise<void> {
       rlsClient.release();
     }
 
-    // 7. Transaction Pooling & Session Isolation Check
-    console.log('\n--- Verifying Transaction-Pooling Compatibility ---');
+    // 7. SET LOCAL hygiene check (does not claim to certify a separate transaction pooler).
+    console.log('\n--- Verifying transaction-scoped session-setting cleanup ---');
     const poolClient = await pool.connect();
     try {
       // Verify SET LOCAL cleans up on COMMIT, avoiding pooler contamination
@@ -606,7 +660,7 @@ export async function runStagingVerification(): Promise<void> {
       const pooledClean = subRes.rows[0].sub === '00000000-0000-0000-0000-000000000001' && !postTxRes.rows[0].sub;
       results.push({
         suite: '5. Connection Pooling Compatibility',
-        test: 'Transaction-Scoped Session Settings (SET LOCAL)',
+        test: 'Transaction-scoped setting is cleared on commit (same server session)',
         passed: pooledClean,
         message: pooledClean ? 'SET LOCAL cleanly discarded at transaction commit' : 'Session leak detected',
       });
@@ -614,6 +668,21 @@ export async function runStagingVerification(): Promise<void> {
     } finally {
       poolClient.release();
     }
+
+    // Clean test tenants before declaring the suite successful. The finally
+    // block repeats this idempotently as a failure-path safeguard.
+    const finalCleanupClient = await pool.connect();
+    try {
+      await cleanupTestData(finalCleanupClient);
+    } finally {
+      finalCleanupClient.release();
+    }
+    results.push({
+      suite: '8. Test Data Cleanup',
+      test: 'Marked staging test rows and profiles removed',
+      passed: true,
+      message: 'Reserved synthetic tenant IDs, dependent rows and synthetic profile records were removed.',
+    });
 
     // Summary Display
     console.log('\n' + '='.repeat(78));
@@ -630,7 +699,7 @@ export async function runStagingVerification(): Promise<void> {
       console.log('All Staging Verification Checks Passed Successfully!');
     } else {
       console.error('Some checks failed.');
-      process.exit(1);
+      process.exitCode = 1;
     }
   } catch (err: any) {
     console.error('\nVerification halted with error:');
