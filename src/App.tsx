@@ -455,9 +455,6 @@ export default function App() {
         onToggleSeniorMode={() => setIsSeniorMode(!isSeniorMode)}
       />
 
-      {/* Prominent Demo / Live Mode Banner */}
-
-
       {/* Toast Notification Bar */}
       {toastMessage && (
         <div className="bg-slate-900 text-white px-4 py-2.5 text-xs sm:text-sm font-semibold flex items-center justify-between shadow-lg sticky top-16 z-40 animate-in fade-in">
