@@ -8,12 +8,11 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
    import.meta.env.VITE_SUPABASE_ANON_KEY ||
    '';
 
-// Fail closed to demo mode. Live connectivity requires an explicit VITE_DEMO_MODE=false.
-
+// Fail closed: the application never starts a mock/demo data service.
 export const isSupabaseConfigured = Boolean(
   import.meta.env.VITE_DEMO_MODE === 'false' &&
-  supabaseUrl && 
-  supabaseAnonKey && 
+  supabaseUrl &&
+  supabaseAnonKey &&
   supabaseUrl !== 'https://your-supabase-project.supabase.co' &&
   !supabaseUrl.includes('your-supabase-project')
 );
