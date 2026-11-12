@@ -953,6 +953,91 @@ export async function runPostgresVerification(): Promise<{
     });
   }
 
+  // =========================================================================
+  // Step 15: Decision actor integrity for leave and attendance corrections
+  // =========================================================================
+  try {
+    const leaveId = 'e9000000-0000-4000-a000-000000000001';
+    const correctionId = 'e9000000-0000-4000-a000-000000000002';
+
+    await db.exec(`
+      INSERT INTO leave_requests (
+        id, organization_id, employee_id, leave_type, start_date, end_date,
+        days_count, reason, status
+      ) VALUES (
+        '${leaveId}', '${orgAId}', '${emp1Id}', 'casual',
+        '2026-12-10', '2026-12-10', 1.0, 'Decision actor test', 'pending'
+      );
+
+      INSERT INTO attendance_corrections (
+        id, organization_id, employee_id, target_date, requested_by,
+        status, correction_type, adjusted_summary, reason
+      ) VALUES (
+        '${correctionId}', '${orgAId}', '${emp1Id}', '2026-12-09',
+        '${userManagerId}', 'pending', 'missing_out', '{}'::jsonb,
+        'Decision actor test'
+      );
+    `);
+
+    await db.exec(`SELECT set_config('request.jwt.claim.sub', '${userManagerId}', false);`);
+
+    await db.exec(`
+      UPDATE leave_requests
+         SET status = 'approved', approved_by = '${userOwnerId}'
+       WHERE id = '${leaveId}';
+      UPDATE attendance_corrections
+         SET status = 'approved', approved_by = '${userOwnerId}'
+       WHERE id = '${correctionId}';
+    `);
+
+    const leaveActor = await db.query<{ approved_by: string }>(
+      `SELECT approved_by FROM leave_requests WHERE id = '${leaveId}'`,
+    );
+    const correctionActor = await db.query<{ approved_by: string }>(
+      `SELECT approved_by FROM attendance_corrections WHERE id = '${correctionId}'`,
+    );
+
+    const leaveActorCorrect = leaveActor.rows[0]?.approved_by === userManagerId;
+    const correctionActorCorrect = correctionActor.rows[0]?.approved_by === userManagerId;
+
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Leave decision actor is sourced from authenticated identity',
+      passed: leaveActorCorrect,
+      message: leaveActorCorrect ? 'Caller-supplied owner ID was replaced with the authenticated branch manager ID.' : 'Leave decision actor did not match auth.uid().',
+    });
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Attendance correction decision actor is sourced from authenticated identity',
+      passed: correctionActorCorrect,
+      message: correctionActorCorrect ? 'Caller-supplied owner ID was replaced with the authenticated branch manager ID.' : 'Correction decision actor did not match auth.uid().',
+    });
+
+    let decidedLeaveImmutable = false;
+    try {
+      await db.exec(`UPDATE leave_requests SET approved_by = '${userOwnerId}' WHERE id = '${leaveId}';`);
+    } catch (error: any) {
+      decidedLeaveImmutable = error.code === '55000' || error.message.includes('decided request is immutable');
+    }
+
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Decided leave requests cannot be edited again',
+      passed: decidedLeaveImmutable,
+      message: decidedLeaveImmutable ? 'Subsequent edits to an approved request were rejected.' : 'An approved leave request could be modified again.',
+    });
+
+    await db.exec(`RESET request.jwt.claim.sub;`);
+  } catch (error: any) {
+    await db.exec(`RESET request.jwt.claim.sub;`).catch(() => undefined);
+    results.push({
+      step: '15. Decision Actor Integrity',
+      name: 'Decision actor trigger validation',
+      passed: false,
+      message: error.message,
+    });
+  }
+
   const allPassed = results.every(r => r.passed);
   return { pgVersion, migrationsApplied, results, allPassed };
 }
