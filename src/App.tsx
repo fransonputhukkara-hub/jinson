@@ -69,6 +69,7 @@ export default function App() {
   const [branches, setBranches] = useState<Branch[]>(isLive ? [] : DEMO_BRANCHES);
   const [devices, setDevices] = useState<AttendanceDevice[]>(isLive ? [] : DEMO_DEVICES);
   const [authReady, setAuthReady] = useState<boolean>(!isLive);
+  const [organizationName, setOrganizationName] = useState<string>(isLive ? '' : DEMO_ORGANIZATION.name);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
@@ -97,6 +98,7 @@ export default function App() {
   const [correctionTargetEmpId, setCorrectionTargetEmpId] = useState<string | undefined>(undefined);
 
   const activeBranch = branches.find(b => b.id === selectedBranchId) || branches[0];
+  const activeOrganizationId = isLive ? (currentUser?.organizationId || '') : DEMO_ORGANIZATION.id;
   const primaryDevice = devices[0];
 
   // Toast feedback helper
@@ -132,15 +134,13 @@ export default function App() {
       return () => { isMounted = false; };
     }
 
-    const organizationId = isLive
-      ? currentUser?.organizationId
-      : DEMO_ORGANIZATION.id;
-
+    const organizationId = activeOrganizationId;
     if (!organizationId) return () => { isMounted = false; };
 
     async function loadData() {
       try {
-        const [branchRows, employeeRows, summaryRows, correctionRows, leaveRows, shiftRows, deviceRows] = await Promise.all([
+        const [organizationRows, branchRows, employeeRows, summaryRows, correctionRows, leaveRows, shiftRows, deviceRows] = await Promise.all([
+          dataService.getOrganizations(),
           dataService.getBranches(organizationId),
           dataService.getEmployees(organizationId, currentUser?.assignedBranchId),
           dataService.getAttendanceSummaries(organizationId),
@@ -151,7 +151,12 @@ export default function App() {
         ]);
 
         if (!isMounted) return;
-        setBranches(branchRows);
+        const visibleBranches = currentUser?.assignedBranchId
+          ? branchRows.filter(branch => branch.id === currentUser.assignedBranchId)
+          : branchRows;
+        const selectedOrganization = organizationRows.find(org => org.id === organizationId);
+        setOrganizationName(selectedOrganization?.name || (isLive ? 'Organization' : DEMO_ORGANIZATION.name));
+        setBranches(visibleBranches);
         setEmployees(employeeRows);
         setSummaries(summaryRows);
         setCorrections(correctionRows);
@@ -159,12 +164,12 @@ export default function App() {
         setShifts(shiftRows);
         setDevices(deviceRows);
         if (isLive) setNotifications([]);
-        if (branchRows.length > 0) {
+        if (visibleBranches.length > 0) {
           const preferredBranch = currentUser?.assignedBranchId;
           setSelectedBranchId(
-            preferredBranch && branchRows.some(branch => branch.id === preferredBranch)
+            preferredBranch && visibleBranches.some(branch => branch.id === preferredBranch)
               ? preferredBranch
-              : branchRows[0].id,
+              : visibleBranches[0].id,
           );
         } else {
           setSelectedBranchId('');
@@ -188,7 +193,7 @@ export default function App() {
 
     void loadData();
     return () => { isMounted = false; };
-  }, [dataService, isLive, currentUser?.id, currentUser?.organizationId, currentUser?.assignedBranchId]);
+  }, [dataService, isLive, activeOrganizationId, currentUser?.id, currentUser?.assignedBranchId]);
 
   // Real-time IST Clock
   useEffect(() => {
@@ -460,7 +465,7 @@ export default function App() {
       <Header
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
-        organizationName={isLive ? currentUser?.fullName || 'AttendEase' : DEMO_ORGANIZATION.name}
+        organizationName={organizationName || 'AttendEase'}
         branchName={activeBranch?.name || 'No branch assigned'}
         isSeniorMode={isSeniorMode}
         onToggleSeniorMode={() => setIsSeniorMode(!isSeniorMode)}
@@ -556,10 +561,10 @@ export default function App() {
                 <h1 className={`font-bold tracking-tight text-slate-900 ${
                   isSeniorMode ? 'text-2xl sm:text-3xl' : 'text-xl sm:text-2xl'
                 }`}>
-                  Good day, Mr. Jinson Varghese
+                  Good day, {currentUser?.fullName || 'there'}
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-600 mt-1">
-                  Thrissur Main Office · General Shift: 09:30 AM to 06:00 PM (15 min grace period)
+                  {activeBranch?.name || 'Your branch'} · Organization attendance overview
                 </p>
               </div>
 
@@ -597,10 +602,10 @@ export default function App() {
                   </div>
                   <div>
                     <h3 className="font-bold text-sm sm:text-base leading-tight">
-                      Attention: 1 Staff Member Has No Check-out Scan Today
+                      Attention: {missingCheckoutCount} Staff Member{missingCheckoutCount === 1 ? '' : 's'} Has No Check-out Scan Today
                     </h3>
                     <p className="text-xs text-orange-800 mt-0.5">
-                      Rahul Menon (Auction Officer) scanned In at 09:35 AM but has no Out punch recorded.
+                      {employees.find(employee => summaries.find(summary => summary.employee_id === employee.id && summary.is_missing_checkout))?.display_name || 'A staff member'} has a missing checkout scan.
                     </p>
                   </div>
                 </div>
@@ -608,7 +613,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    setCorrectionTargetEmpId('emp-004'); // Rahul Menon
+                    setCorrectionTargetEmpId(summaries.find(summary => summary.is_missing_checkout)?.employee_id);
                     setIsCorrectionModalOpen(true);
                   }}
                   className="px-4 py-2.5 bg-orange-800 hover:bg-orange-900 text-white rounded-xl text-xs font-bold transition-colors shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
@@ -646,15 +651,22 @@ export default function App() {
                 </div>
               )}
 
-              <PayrollStatusCard
-                currentPeriod="October 2026"
-                currentStatus="draft"
-                eligibleEmployeesCount={totalEmployees}
-                totalGrossEstimate={224000}
-                previousPeriod="September 2026"
-                previousStatus="locked"
-                onOpenPayroll={() => setCurrentTab('payroll')}
-              />
+              {isLive ? (
+                <div className="bg-white rounded-xl border border-amber-200 p-5">
+                  <h3 className="font-bold text-slate-900">Payroll readiness</h3>
+                  <p className="mt-1 text-sm text-slate-600">Live payroll totals are not yet calculated from approved attendance and customer-confirmed salary rules. The preview is disabled in live mode.</p>
+                </div>
+              ) : (
+                <PayrollStatusCard
+                  currentPeriod="October 2026"
+                  currentStatus="draft"
+                  eligibleEmployeesCount={totalEmployees}
+                  totalGrossEstimate={224000}
+                  previousPeriod="September 2026"
+                  previousStatus="locked"
+                  onOpenPayroll={() => setCurrentTab('payroll')}
+                />
+              )}
             </div>
 
             {/* Bottom Section: Action Items & Quick Links */}
@@ -700,6 +712,7 @@ export default function App() {
 
         {currentTab === 'leave' && (
           <LeaveManagementView
+            organizationId={activeOrganizationId}
             leaveRequests={leaveRequests}
             employees={employees}
             onApplyLeave={handleApplyLeave}
@@ -710,6 +723,7 @@ export default function App() {
 
         {currentTab === 'employees' && (
           <EmployeesView
+            organizationId={activeOrganizationId}
             employees={employees}
             shifts={shifts}
             branches={branches}
@@ -756,7 +770,7 @@ export default function App() {
             <span className="font-bold text-slate-700">AttendEase SaaS</span> · Universal Attendance &amp; Payroll Platform
           </div>
           <div className="flex items-center gap-4 text-slate-500">
-            <span>Milestone 2 Verified Demo</span>
+            <span>{isLive ? 'Authenticated organization workspace' : 'Evaluation demo mode'}</span>
             <span aria-hidden="true">·</span>
             <button
               type="button"
@@ -809,6 +823,8 @@ export default function App() {
 
       {/* Attendance Correction Modal */}
       <AttendanceCorrectionModal
+        organizationId={activeOrganizationId}
+        requestedByUserId={currentUser?.id || ''}
         isOpen={isCorrectionModalOpen}
         onClose={() => setIsCorrectionModalOpen(false)}
         employees={employees}
