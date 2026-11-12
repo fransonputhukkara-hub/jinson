@@ -173,11 +173,12 @@ export default function App() {
         if (isLive) setNotifications([]);
         if (visibleBranches.length > 0) {
           const preferredBranch = currentUser?.assignedBranchId;
-          setSelectedBranchId(
-            preferredBranch && visibleBranches.some(branch => branch.id === preferredBranch)
+          setSelectedBranchId(previous => {
+            if (previous && visibleBranches.some(branch => branch.id === previous)) return previous;
+            return preferredBranch && visibleBranches.some(branch => branch.id === preferredBranch)
               ? preferredBranch
-              : visibleBranches[0].id,
-          );
+              : visibleBranches[0].id;
+          });
         } else {
           setSelectedBranchId('');
         }
@@ -223,11 +224,13 @@ export default function App() {
 
   // Summary counts
   const totalEmployees = employees.length;
-  const presentCount = summaries.filter(s => s.status === 'present').length;
-  const lateCount = summaries.filter(s => s.status === 'late' || s.is_late).length;
-  const absentCount = summaries.filter(s => s.status === 'absent').length;
-  const onLeaveCount = summaries.filter(s => s.status === 'on_leave').length;
-  const missingCheckoutCount = summaries.filter(s => s.is_missing_checkout).length;
+  const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const todaySummaries = summaries.filter(summary => summary.work_date === todayIst);
+  const presentCount = todaySummaries.filter(s => s.status === 'present').length;
+  const lateCount = todaySummaries.filter(s => s.status === 'late' || s.is_late).length;
+  const absentCount = todaySummaries.filter(s => s.status === 'absent').length;
+  const onLeaveCount = todaySummaries.filter(s => s.status === 'on_leave').length;
+  const missingCheckoutCount = todaySummaries.filter(s => s.is_missing_checkout).length;
 
   // Workflow 1: Add new employee
   const handleAddEmployee = async (newEmpData: Omit<Employee, 'id' | 'created_at' | 'updated_at'>) => {
@@ -725,16 +728,23 @@ export default function App() {
         )}
 
         {currentTab === 'corrections' && (
-          <CorrectionsManager
-            corrections={corrections}
-            employees={employees}
-            onApprove={handleApproveCorrection}
-            onReject={handleRejectCorrection}
-            onOpenNewModal={() => {
-              setCorrectionTargetEmpId(undefined);
-              setIsCorrectionModalOpen(true);
-            }}
-          />
+          <>
+            {isLive && (
+              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+                Live correction requests can be submitted and reviewed. Approval and rejection remain disabled until the database workflow atomically records the decision and recalculates the daily attendance summary.
+              </div>
+            )}
+            <CorrectionsManager
+              corrections={corrections}
+              employees={employees}
+              onApprove={isLive ? () => showToast('Live correction approval is not enabled yet.') : handleApproveCorrection}
+              onReject={isLive ? () => showToast('Live correction rejection is not enabled yet.') : handleRejectCorrection}
+              onOpenNewModal={() => {
+                setCorrectionTargetEmpId(undefined);
+                setIsCorrectionModalOpen(true);
+              }}
+            />
+          </>
         )}
 
         {currentTab === 'leave' && (
