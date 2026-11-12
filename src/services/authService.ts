@@ -9,6 +9,7 @@ export interface AuthUser {
   fullName: string;
   organizationId: string;
   assignedBranchId?: string;
+  employeeId?: string;
 }
 
 export const DEMO_USERS: Record<string, AuthUser> = {
@@ -122,6 +123,22 @@ class AuthService {
       (typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : '') ||
       email;
 
+    let employeeId: string | undefined;
+    if (membership.role === 'employee') {
+      const employeeResult = await supabase
+        .from('employees')
+        .select('id')
+        .eq('organization_id', membership.organization_id)
+        .eq('email', email)
+        .maybeSingle();
+      if (requestId !== this.sessionResolution) return this.currentUser;
+      if (employeeResult.error) throw new Error(`Unable to load employee profile: ${employeeResult.error.message}`);
+      if (!employeeResult.data) {
+        throw new Error('Your login is not linked to an employee record. Ask your organization administrator to match your login email to your employee record.');
+      }
+      employeeId = employeeResult.data.id;
+    }
+
     const resolvedUser: AuthUser = {
       id: user.id,
       email,
@@ -129,6 +146,7 @@ class AuthService {
       fullName,
       organizationId: membership.organization_id,
       assignedBranchId: membership.assigned_branch_id || undefined,
+      employeeId,
     };
 
     if (requestId === this.sessionResolution) {
