@@ -328,6 +328,7 @@ export async function runStagingVerification(): Promise<void> {
       await conn1.query(`UPDATE payroll_runs SET status = 'locked' WHERE id = '${TEST_RUN_ORD1_ID}';`);
 
       let conn2BlockedAndRejected = false;
+      const blockedPid1 = Number((await conn2.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
       const conn2Promise = (async () => {
         try {
           await conn2.query(`
@@ -342,10 +343,9 @@ export async function runStagingVerification(): Promise<void> {
         }
       })();
 
-      const blockedPid1 = Number((await conn2.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
       await waitForLockWait(conn1, blockedPid1);
-      const ordering1Result = await conn2Promise;
       await conn1.query('COMMIT;');
+      const ordering1Result = await conn2Promise;
       conn2BlockedAndRejected = !ordering1Result.committed && ordering1Result.code === '23000'
         && ordering1Result.message.includes('locked and immutable');
 
