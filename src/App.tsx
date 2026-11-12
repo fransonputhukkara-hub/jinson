@@ -79,12 +79,12 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(authService.getCurrentUser());
 
   // Core application states
-  const [employees, setEmployees] = useState<Employee[]>(DEMO_EMPLOYEES);
-  const [summaries, setSummaries] = useState<AttendanceDailySummary[]>(DEMO_SUMMARIES);
-  const [corrections, setCorrections] = useState<AttendanceCorrection[]>(DEMO_CORRECTIONS);
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(DEMO_LEAVE_REQUESTS);
-  const [shifts, setShifts] = useState<Shift[]>(DEMO_SHIFTS);
-  const [notifications, setNotifications] = useState<AppNotification[]>(DEMO_NOTIFICATIONS);
+  const [employees, setEmployees] = useState<Employee[]>(isLive ? [] : DEMO_EMPLOYEES);
+  const [summaries, setSummaries] = useState<AttendanceDailySummary[]>(isLive ? [] : DEMO_SUMMARIES);
+  const [corrections, setCorrections] = useState<AttendanceCorrection[]>(isLive ? [] : DEMO_CORRECTIONS);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(isLive ? [] : DEMO_LEAVE_REQUESTS);
+  const [shifts, setShifts] = useState<Shift[]>(isLive ? [] : DEMO_SHIFTS);
+  const [notifications, setNotifications] = useState<AppNotification[]>(isLive ? [] : DEMO_NOTIFICATIONS);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Time & date
