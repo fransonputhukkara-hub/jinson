@@ -168,6 +168,47 @@ USING (
   )
 );
 
+-- Enforce same-tenant ownership for attendance correction employee references.
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_attendance_corrections_employee_org'
+  ) THEN
+    ALTER TABLE attendance_corrections
+      ADD CONSTRAINT fk_attendance_corrections_employee_org
+      FOREIGN KEY (employee_id, organization_id)
+      REFERENCES employees(id, organization_id) ON DELETE CASCADE;
+  END IF;
+END;
+$;
+
+-- A requester may create a correction only for their own employee row or
+-- another employee within the branch they are assigned to. The actor must be
+-- the authenticated user; caller-supplied requested_by cannot impersonate staff.
+DROP POLICY IF EXISTS "Branch managers and employees can request corrections" ON attendance_corrections;
+CREATE POLICY "Users can request corrections within their employee scope"
+ON attendance_corrections FOR INSERT
+TO authenticated
+WITH CHECK (
+  requested_by = auth.uid()
+  AND organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
+  AND (
+    auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
+    OR (
+      auth_user_role_in_org(organization_id) = 'branch_manager'
+      AND employee_id IN (
+        SELECT e.id FROM employees e
+        WHERE e.organization_id = attendance_corrections.organization_id
+          AND e.branch_id = auth_user_assigned_branch(attendance_corrections.organization_id)
+      )
+    )
+    OR (
+      auth_user_role_in_org(organization_id) = 'employee'
+      AND employee_id = auth_current_employee_id(attendance_corrections.organization_id)
+    )
+  )
+);
+
 -- Corrections can contain employee attendance details. Restrict reads to the
 -- organization owner/admin, the assigned branch manager, or the target employee.
 DROP POLICY IF EXISTS "Members can view attendance corrections in org" ON attendance_corrections;
@@ -256,6 +297,11 @@ USING (
     AND auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
   )
 );
+
+-- Prevent authenticated users from editing their login email directly in the
+-- profile table. Authentication email changes must go through Supabase Auth.
+REVOKE UPDATE ON user_profiles FROM authenticated;
+GRANT UPDATE (full_name, phone, avatar_url, updated_at) ON user_profiles TO authenticated;
 
 -- The migration itself is deliberately forward-only and must be recorded by the
 -- migration runner / Supabase migration history after successful application.
