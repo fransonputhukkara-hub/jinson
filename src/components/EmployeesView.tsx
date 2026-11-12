@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Users, 
   UserPlus, 
@@ -17,6 +17,7 @@ import {
 import { Employee, Shift, Branch } from '../types/database.types';
 
 interface EmployeesViewProps {
+  organizationId: string;
   employees: Employee[];
   shifts: Shift[];
   branches: Branch[];
@@ -25,6 +26,7 @@ interface EmployeesViewProps {
 }
 
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
+  organizationId,
   employees,
   shifts,
   branches,
@@ -43,9 +45,12 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
   const [designation, setDesignation] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [branchId, setBranchId] = useState(branches[0]?.id || 'branch-tsr-main');
-  const [shiftId, setShiftId] = useState(shifts[0]?.id || 'shift-general');
-  const [joiningDate, setJoiningDate] = useState('2026-10-15');
+  const [branchId, setBranchId] = useState(branches[0]?.id || '');
+  const [shiftId, setShiftId] = useState(shifts[0]?.id || '');
+  const [joiningDate, setJoiningDate] = useState(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+
+  useEffect(() => { if (!branchId && branches[0]) setBranchId(branches[0].id); }, [branchId, branches]);
+  useEffect(() => { if (!shiftId && shifts[0]) setShiftId(shifts[0].id); }, [shiftId, shifts]);
 
   const branchMap = new Map(branches.map(b => [b.id, b]));
   const shiftMap = new Map(shifts.map(s => [s.id, s]));
@@ -62,13 +67,17 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!branchId) {
+      alert('No authorized branch is available for this account. Ask your organization administrator to assign a branch.');
+      return;
+    }
     if (!firstName || !lastName || !employeeCode || !designation) {
       alert('Please fill all mandatory fields (First Name, Last Name, Employee Code, Designation).');
       return;
     }
 
     onAddEmployee({
-      organization_id: 'org-jinson-chit-fund',
+      organization_id: organizationId,
       branch_id: branchId,
       employee_code: employeeCode,
       first_name: firstName,
@@ -80,7 +89,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
       joining_date: joiningDate,
       employment_status: 'active',
       is_active: true,
-      shift_id: shiftId,
+      ...(shiftId ? { shift_id: shiftId } : {}),
     });
 
     // Reset

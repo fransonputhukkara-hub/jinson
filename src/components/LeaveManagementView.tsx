@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   CalendarOff, 
   PlusCircle, 
@@ -12,6 +12,7 @@ import {
 import { LeaveRequest, Employee } from '../types/database.types';
 
 interface LeaveManagementViewProps {
+  organizationId: string;
   leaveRequests: LeaveRequest[];
   employees: Employee[];
   onApplyLeave: (req: Omit<LeaveRequest, 'id' | 'created_at'>) => void;
@@ -20,6 +21,7 @@ interface LeaveManagementViewProps {
 }
 
 export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
+  organizationId,
   leaveRequests,
   employees,
   onApplyLeave,
@@ -32,10 +34,14 @@ export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
   // Form states
   const [employeeId, setEmployeeId] = useState(employees[0]?.id || '');
   const [leaveType, setLeaveType] = useState<LeaveRequest['leave_type']>('casual');
-  const [startDate, setStartDate] = useState('2026-10-18');
-  const [endDate, setEndDate] = useState('2026-10-19');
+  const [startDate, setStartDate] = useState(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
+  const [endDate, setEndDate] = useState(new Date(Date.now() + 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!employeeId && employees[0]) setEmployeeId(employees[0].id);
+  }, [employeeId, employees]);
 
   const employeeMap = new Map(employees.map(e => [e.id, e]));
 
@@ -46,6 +52,7 @@ export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!employeeId) { setError('Select an employee before submitting.'); return; }
     if (!reason.trim()) {
       setError('Please provide a reason for the leave application.');
       return;
@@ -53,10 +60,11 @@ export const LeaveManagementView: React.FC<LeaveManagementViewProps> = ({
 
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const diffDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 3600 * 24)) + 1);
+    if (end < start) { setError('End date cannot be before start date.'); return; }
+    const diffDays = Math.max(1, Math.round((Date.UTC(end.getFullYear(), end.getMonth(), end.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000) + 1);
 
     onApplyLeave({
-      organization_id: 'org-jinson-chit-fund',
+      organization_id: organizationId,
       employee_id: employeeId,
       leave_type: leaveType,
       start_date: startDate,
