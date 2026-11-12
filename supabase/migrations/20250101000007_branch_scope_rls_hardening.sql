@@ -27,7 +27,7 @@ USING (
     AND (
       auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
       OR (
-        auth_user_role_in_org(organization_id) IN ('branch_manager', 'employee')
+        auth_user_role_in_org(organization_id) = 'branch_manager'
         AND id = auth_user_assigned_branch(organization_id)
       )
       OR (
@@ -78,8 +78,14 @@ USING (
     organization_id IN (SELECT organization_id FROM auth_current_user_org_ids())
     AND (
       auth_user_role_in_org(organization_id) IN ('company_owner', 'company_admin')
-      OR branch_id IS NULL
-      OR branch_id = auth_user_assigned_branch(organization_id)
+      OR (
+        auth_user_role_in_org(organization_id) = 'branch_manager'
+        AND (branch_id IS NULL OR branch_id = auth_user_assigned_branch(organization_id))
+      )
+      OR (
+        auth_user_role_in_org(organization_id) = 'employee'
+        AND (branch_id IS NULL OR branch_id = auth_current_employee_branch_id(organization_id))
+      )
     )
   )
 );
