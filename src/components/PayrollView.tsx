@@ -33,83 +33,10 @@ export const PayrollView: React.FC<PayrollViewProps> = ({ employees }) => {
   // Configurable policy options pending Jinson Chit Fund confirmation
   const [lateDeductionPolicy, setLateDeductionPolicy] = useState<'grace_3' | 'flat_150' | 'none'>('grace_3');
   const [incentivePolicy, setIncentivePolicy] = useState<'collection_commission' | 'fixed_monthly' | 'none'>('collection_commission');
-  const [selectedMonth, setSelectedMonth] = useState('October 2026');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }));
 
-  // Realistic synthetic base compensation figures
-  const payrollItems: PayrollItemRow[] = employees.map((emp) => {
-    let basic = 18000;
-    let hra = 5000;
-    let allowance = 2000;
-    let lateDays = 0;
-
-    if (emp.designation.includes('Managing Director')) {
-      basic = 60000;
-      hra = 20000;
-      allowance = 15000;
-    } else if (emp.designation.includes('Branch Manager')) {
-      basic = 35000;
-      hra = 10000;
-      allowance = 5000;
-    } else if (emp.designation.includes('Senior Chit Collection')) {
-      basic = 22000;
-      hra = 6000;
-      allowance = 2000;
-      lateDays = 1; // Priya Nair: 1 late day
-    } else if (emp.designation.includes('Auction & Verification')) {
-      basic = 20000;
-      hra = 5000;
-      allowance = 2500;
-    } else if (emp.designation.includes('Field Collection')) {
-      basic = 16000;
-      hra = 4000;
-      allowance = 3000;
-    } else if (emp.designation.includes('Cashier')) {
-      basic = 19000;
-      hra = 5000;
-      allowance = 2000;
-    } else {
-      basic = 15000;
-      hra = 3500;
-      allowance = 1500;
-    }
-
-    // Dynamic incentives based on policy
-    let calculatedIncentive = 0;
-    if (incentivePolicy === 'collection_commission' && emp.designation.includes('Collection')) {
-      calculatedIncentive = 4500; // Provisional collection commission
-    } else if (incentivePolicy === 'fixed_monthly') {
-      calculatedIncentive = 1000;
-    }
-
-    // Dynamic deduction based on policy
-    let calculatedDeduction = 0;
-    if (lateDays > 0) {
-      if (lateDeductionPolicy === 'flat_150') {
-        calculatedDeduction = lateDays * 150;
-      } else if (lateDeductionPolicy === 'grace_3') {
-        // If late days <= 3, forgiven under grace policy
-        calculatedDeduction = lateDays > 3 ? (lateDays - 3) * 200 : 0;
-      } else {
-        calculatedDeduction = 0;
-      }
-    }
-
-    const gross = (basic + hra + allowance + calculatedIncentive);
-    const net = Math.max(0, gross - calculatedDeduction);
-
-    return {
-      employee: emp,
-      basicSalary: basic,
-      hra,
-      specialAllowance: allowance,
-      incentives: calculatedIncentive,
-      overtimePay: 0,
-      attendanceDeductions: calculatedDeduction,
-      grossSalary: gross,
-      netSalary: net,
-      lateDaysCount: lateDays,
-    };
-  });
+  // No salary assumptions are made. Payroll remains empty until verified salary data and approved policy exist.
+  const payrollItems: PayrollItemRow[] = [];
 
   const totalGross = payrollItems.reduce((acc, row) => acc + row.grossSalary, 0);
   const totalNet = payrollItems.reduce((acc, row) => acc + row.netSalary, 0);
