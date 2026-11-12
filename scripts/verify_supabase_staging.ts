@@ -164,42 +164,54 @@ export async function runStagingVerification(): Promise<void> {
 
   const results: CheckResult[] = [];
 
-  // Test rows belong to a dedicated synthetic organization. Deleting that one
-  // marked tenant cascades only through test-owned rows. Cleanup failures are fatal.
+  // Test tenants use reserved UUIDs and marker codes. Validate both markers before
+  // deleting anything, then remove dependent rows explicitly in FK-safe order.
   const cleanupTestData = async (client: pg.PoolClient) => {
-    const existing = await client.query(
-      'SELECT code FROM organizations WHERE id = $1',
-      [TEST_ORG_ID],
-    );
-    if (existing.rowCount === 0) return;
-    if (existing.rows[0].code !== 'ATTENDEASE_STAGING_TEST') {
-      throw new Error('Refusing to clean test UUID: organization marker does not match.');
+    const [primaryTenant, secondaryTenant] = await Promise.all([
+      client.query('SELECT code FROM organizations WHERE id = $1', [TEST_ORG_ID]),
+      client.query('SELECT code FROM organizations WHERE id = $1', [TEST_ORG_B_ID]),
+    ]);
+    if (primaryTenant.rowCount && primaryTenant.rows[0].code !== 'ATTENDEASE_STAGING_TEST') {
+      throw new Error('Refusing to clean primary test UUID: organization marker does not match.');
     }
-    const otherTenant = await client.query('SELECT code FROM organizations WHERE id = $1', [TEST_ORG_B_ID]);
-    if (otherTenant.rowCount && otherTenant.rows[0].code !== 'ATTENDEASE_STAGING_TEST_B') {
-      throw new Error('Refusing to clean second test UUID: organization marker does not match.');
+    if (secondaryTenant.rowCount && secondaryTenant.rows[0].code !== 'ATTENDEASE_STAGING_TEST_B') {
+      throw new Error('Refusing to clean secondary test UUID: organization marker does not match.');
     }
+    if (!primaryTenant.rowCount && !secondaryTenant.rowCount) return;
+
     await client.query('BEGIN');
     try {
-      await client.query('DELETE FROM organizations WHERE id = $1 AND code = $2', [TEST_ORG_B_ID, 'ATTENDEASE_STAGING_TEST_B']);
-      await client.query('DELETE FROM payslips WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM payroll_items WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM payroll_runs WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM leave_requests WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM attendance_corrections WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM attendance_daily_summaries WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM attendance_events WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM device_employee_mappings WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM device_sync_logs WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM attendance_devices WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM employee_salary_assignments WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM employees WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM departments WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM shifts WHERE organization_id = $1', [TEST_ORG_ID]);
-      await client.query('DELETE FROM branches WHERE organization_id = $1', [TEST_ORG_ID]);
+      for (const organizationId of [TEST_ORG_ID, TEST_ORG_B_ID]) {
+        await client.query('DELETE FROM payslips WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM payroll_items WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM payroll_runs WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM leave_requests WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM attendance_corrections WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM attendance_daily_summaries WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM attendance_events WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM device_employee_mappings WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM device_sync_logs WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM attendance_devices WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM employee_salary_assignments WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM employees WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM departments WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM shifts WHERE organization_id = $1', [organizationId]);
+        await client.query('DELETE FROM branches WHERE organization_id = $1', [organizationId]);
+      }
       await client.query(
         'DELETE FROM organizations WHERE id = $1 AND code = $2',
         [TEST_ORG_ID, 'ATTENDEASE_STAGING_TEST'],
+      );
+      await client.query(
+        'DELETE FROM organizations WHERE id = $1 AND code = $2',
+        [TEST_ORG_B_ID, 'ATTENDEASE_STAGING_TEST_B'],
+      );
+      await client.query(
+        'DELETE FROM user_profiles WHERE id = ANY($1::uuid[]) AND email = ANY($2::text[])',
+        [
+          [TEST_RLS_USER_ID, TEST_OTHER_USER_ID],
+          ['staging-rls-manager@attendease.invalid', 'staging-rls-coworker@attendease.invalid'],
+        ],
       );
       await client.query('COMMIT');
     } catch (error) {
@@ -364,6 +376,11 @@ export async function runStagingVerification(): Promise<void> {
         INSERT INTO organization_members (organization_id, user_id, role, assigned_branch_id) VALUES
           ('${TEST_ORG_ID}', '${TEST_RLS_USER_ID}', 'branch_manager', '${TEST_BRANCH_ID}'),
           ('${TEST_ORG_ID}', '${TEST_OTHER_USER_ID}', 'employee', '${TEST_BRANCH_2_ID}');
+        INSERT INTO attendance_daily_summaries (organization_id, employee_id, work_date, status)
+        VALUES
+          ('${TEST_ORG_ID}', '${TEST_EMP_ID}', '2026-11-01', 'present'),
+          ('${TEST_ORG_ID}', '${TEST_EMP_2_ID}', '2026-11-01', 'present'),
+          ('${TEST_ORG_B_ID}', '${TEST_EMP_B_ID}', '2026-11-01', 'present');
       `);
 
       // Test Concurrency Ordering 1:
@@ -507,6 +524,10 @@ export async function runStagingVerification(): Promise<void> {
         'SELECT id FROM employees WHERE organization_id = ANY($1::uuid[])',
         [[TEST_ORG_ID, TEST_ORG_B_ID]],
       );
+      const summaryRows = await rlsClient.query(
+        'SELECT employee_id FROM attendance_daily_summaries WHERE organization_id = ANY($1::uuid[])',
+        [[TEST_ORG_ID, TEST_ORG_B_ID]],
+      );
       const profileRows = await rlsClient.query(
         'SELECT id FROM user_profiles WHERE id = ANY($1::uuid[])',
         [[TEST_RLS_USER_ID, TEST_OTHER_USER_ID]],
@@ -514,6 +535,7 @@ export async function runStagingVerification(): Promise<void> {
 
       const tenantIsolated = tenantRows.rowCount === 1 && tenantRows.rows[0].id === TEST_ORG_ID;
       const branchScoped = employeeRows.rowCount === 1 && employeeRows.rows[0].id === TEST_EMP_ID;
+      const summaryScoped = summaryRows.rowCount === 1 && summaryRows.rows[0].employee_id === TEST_EMP_ID;
       const profilePrivate = profileRows.rowCount === 1 && profileRows.rows[0].id === TEST_RLS_USER_ID;
 
       results.push({
@@ -527,6 +549,12 @@ export async function runStagingVerification(): Promise<void> {
         test: 'Branch-manager employee isolation',
         passed: branchScoped,
         message: branchScoped ? 'Branch manager sees employees only in the assigned branch.' : `Unexpected visible employee count: ${employeeRows.rowCount}`,
+      });
+      results.push({
+        suite: '6. Hosted RLS Isolation',
+        test: 'Branch-manager daily summary isolation',
+        passed: summaryScoped,
+        message: summaryScoped ? 'Branch manager sees daily summaries only for the assigned branch.' : `Unexpected visible summary count: ${summaryRows.rowCount}`,
       });
       results.push({
         suite: '6. Hosted RLS Isolation',
