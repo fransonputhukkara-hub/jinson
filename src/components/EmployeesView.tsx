@@ -67,6 +67,10 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!branchId) {
+      alert('No authorized branch is available for this account. Ask your organization administrator to assign a branch.');
+      return;
+    }
     if (!firstName || !lastName || !employeeCode || !designation) {
       alert('Please fill all mandatory fields (First Name, Last Name, Employee Code, Designation).');
       return;
@@ -85,7 +89,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
       joining_date: joiningDate,
       employment_status: 'active',
       is_active: true,
-      shift_id: shiftId,
+      ...(shiftId ? { shift_id: shiftId } : {}),
     });
 
     // Reset
