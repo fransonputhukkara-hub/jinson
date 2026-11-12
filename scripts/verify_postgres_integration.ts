@@ -50,6 +50,9 @@ export async function runPostgresVerification(): Promise<{
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
         CREATE ROLE anon NOLOGIN;
       END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE ROLE service_role NOLOGIN BYPASSRLS;
+      END IF;
     END $$;
 
     GRANT USAGE ON SCHEMA public TO authenticated, anon;
@@ -66,7 +69,9 @@ export async function runPostgresVerification(): Promise<{
     '20250101000003_locked_payroll_child_integrity.sql',
     '20250101000004_fix_employee_rls_recursion.sql',
     '20250101000005_concurrency_and_schema_hardening.sql',
-    '20250101000006_remediation_and_security_hardening.sql'
+    '20250101000006_remediation_and_security_hardening.sql',
+    '20250101000007_branch_scope_rls_hardening.sql',
+    '20250101000008_remaining_tenant_and_payroll_integrity.sql'
   ];
 
   const migrationsDir = path.resolve(process.cwd(), 'supabase/migrations');
@@ -729,12 +734,19 @@ export async function runPostgresVerification(): Promise<{
       message: draftDeleted ? 'Draft payroll run successfully deleted without false trigger abort' : 'Draft payroll run deletion failed or was canceled',
     });
 
-    // 11b: Locked payroll run deletion must raise an explicit exception
+    // 11b: A payroll run is created as draft, then locked by the database lifecycle.
     await db.exec(`
-      INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status, locked_at)
-      VALUES ('${testLockedRunId}', '${testOrgId}', '2027-02-01', '2027-02-28', 'February 2027 Locked', 'locked', now())
+      INSERT INTO payroll_runs (id, organization_id, period_start, period_end, period_label, status)
+      VALUES ('${testLockedRunId}', '${testOrgId}', '2027-02-01', '2027-02-28', 'February 2027 Locked', 'draft')
       ON CONFLICT DO NOTHING;
+      UPDATE payroll_runs SET status = 'locked', locked_at = '2000-01-01T00:00:00Z'
+      WHERE id = '${testLockedRunId}' AND status = 'draft';
     `);
+
+    const testLockedTimestamp = await db.query<{ locked_at: string }>(
+      `SELECT locked_at FROM payroll_runs WHERE id = '${testLockedRunId}'`,
+    );
+    const generatedLockTimestamp = new Date(testLockedTimestamp.rows[0].locked_at).getUTCFullYear() > 2020;
 
     let lockedDeleteBlocked = false;
     try {
@@ -749,12 +761,21 @@ export async function runPostgresVerification(): Promise<{
       passed: lockedDeleteBlocked,
       message: lockedDeleteBlocked ? 'Attempt to delete locked payroll run raised expected immutability exception' : 'Locked payroll run was deleted!',
     });
+    results.push({
+      step: '11. Payroll Delete Integrity',
+      name: 'Database overwrites caller-supplied locked_at value',
+      passed: generatedLockTimestamp,
+      message: generatedLockTimestamp ? 'The caller-supplied historical timestamp was replaced by the database lock timestamp.' : 'The caller-controlled locked_at value was not replaced.',
+    });
 
     // Teardown locked run safely for clean state
     await db.exec(`
+      ALTER TABLE payroll_items DISABLE TRIGGER trg_payroll_item_lock_integrity;
       ALTER TABLE payroll_runs DISABLE TRIGGER trg_prevent_locked_payroll_modification;
+      DELETE FROM payroll_items WHERE payroll_run_id = '${testLockedRunId}';
       DELETE FROM payroll_runs WHERE id = '${testLockedRunId}';
       ALTER TABLE payroll_runs ENABLE TRIGGER trg_prevent_locked_payroll_modification;
+      ALTER TABLE payroll_items ENABLE TRIGGER trg_payroll_item_lock_integrity;
     `);
   } catch (err: any) {
     results.push({
