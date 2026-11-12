@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   FileEdit, 
   Clock, 
@@ -38,6 +38,11 @@ export const AttendanceCorrectionModal: React.FC<AttendanceCorrectionModalProps>
   const [proposedCheckOut, setProposedCheckOut] = useState('18:00');
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (preSelectedEmployeeId) setEmployeeId(preSelectedEmployeeId);
+    else if (!employeeId && employees[0]) setEmployeeId(employees[0].id);
+  }, [preSelectedEmployeeId, employeeId, employees]);
 
   if (!isOpen) return null;
 
