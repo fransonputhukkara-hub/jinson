@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'fix/**'
+      - 'feat/**'
   pull_request:
     branches:
       - main
@@ -31,6 +32,9 @@ jobs:
 
       - name: Run unit and integration tests
         run: npm test
+
+      - name: Test Hikvision HTTP receiver
+        run: npm --prefix services/hikvision-receiver test
 
       - name: TypeScript validation
         run: npm run lint
