@@ -29,7 +29,8 @@ test('store resolves only the configured device serial using the server-only key
   });
   const device = await store.getDevice();
   assert.equal(device.id, 'device-1');
-  assert.match(observed[0].url, /serial_number=eq\\./);
+  const lookupUrl = new URL(observed[0].url);
+  assert.equal(lookupUrl.searchParams.get('serial_number'), 'eq.DS-K1T320MFWX20241227V030520ENGR3024763');
   assert.equal(observed[0].headers.apikey, 'sb_secret_test');
   assert.equal(observed[0].headers.Authorization, undefined);
 });
