@@ -74,11 +74,16 @@ export function createSupabaseStore(config, fetchImpl = fetch) {
       const employeeId = event.mappingKeyType === 'card_no'
         ? mappings.byCardNumber.get(event.deviceUserId) ?? null
         : mappings.byDeviceUserId.get(event.deviceUserId) ?? null;
+      const eventSerialNo = /^\d+$/.test(String(event.eventSerialNo ?? ''))
+        ? String(event.eventSerialNo)
+        : null;
       return {
         organization_id: device.organization_id, device_id: device.id,
-        employee_id: employeeId, device_user_id: event.deviceUserId,
+        employee_id: employeeId, is_unmapped_user: employeeId === null,
+        device_user_id: event.deviceUserId,
         event_time: event.eventTime, event_type: event.eventType,
         verification_mode: event.verificationMode, is_processed: false,
+        event_serial_no: eventSerialNo,
         raw_payload: event.rawPayload,
       };
     });
@@ -95,7 +100,7 @@ export function createSupabaseStore(config, fetchImpl = fetch) {
       body: { last_sync_at: new Date().toISOString(), status: 'connected', last_error: null },
       prefer: 'return=minimal',
     });
-    return { received: events.length, inserted, unmapped: rows.filter((row) => !row.employee_id).length };
+    return { received: events.length, inserted, unmapped: rows.filter((row) => row.is_unmapped_user).length };
   }
   return { getDevice, ingest };
 }
